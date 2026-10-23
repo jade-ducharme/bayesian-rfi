@@ -8,12 +8,43 @@ import numpyro
 import numpyro.distributions as dist
 from numpy.polynomial.legendre import legvander
 
+# Pointing label of a fit pooled over every pointing (`--pool-pointings`): each
+# (night, pointing) block is then its own entry on the model's "nights" plate.
+POOLED_POINTING = "all"
+
+# Median per-night noise of the 2014 SSINS the priors were tuned on (Section V.2:
+# cutoff 2*med(sigma_noise) = 0.67); see `rescale_to_noise`.
+PAPER_SIGMA_NOISE = 0.335
+
+_NPZ_NAME = re.compile(r"processed_(\d{6})_p(-?\d+)\.npz$")
+
+
 # ----------------------------
 # Helpers
 # ----------------------------
 
 
-def reject_nights(npz_files, tol=0.33):
+def night_id_from_path(npz_file, pooled=False):
+    """
+    The id of the night a preprocessed .npz file holds.
+
+    Normally the truncated (6-digit) first obsid of the night. In a pooled fit
+    one night contributes one file per pointing, so the pointing is appended
+    (`"144100_p2"`) to keep the ids, and the posterior index tied to them, unique.
+    """
+    m = _NPZ_NAME.search(os.path.basename(npz_file))
+    if m is None:
+        raise ValueError(f"Not a preprocessed night file: {npz_file}")
+    return f"{m.group(1)}_p{m.group(2)}" if pooled else m.group(1)
+
+
+def night_sort_key(night_id):
+    """Chronological sort key for a (possibly pointing-tagged) night id."""
+    night, _, pointing = str(night_id).partition("_p")
+    return int(night), int(pointing or 0)
+
+
+def reject_nights(npz_files, tol=0.33, pooled=False):
     """
     Remove nights where the fraction of flagged samples exceeds a tolerance.
 
@@ -24,6 +55,8 @@ def reject_nights(npz_files, tol=0.33):
     tol : float, optional
         Maximum allowed flagged fraction. Nights where nansum(ssins)/ssins.size > tol
         are rejected. Default 0.33.
+    pooled : bool, optional
+        Use pointing-tagged night ids (see `night_id_from_path`).
 
     Returns
     -------
@@ -45,12 +78,12 @@ def reject_nights(npz_files, tol=0.33):
         d = np.load(f)
         flags = d["ssins"]
         if np.nansum(flags) / flags.size > tol:
-            night_id = re.search(r'\d{6}', f).group()
+            night_id = night_id_from_path(f, pooled)
             reject.append(night_id)
             reject_obsids[night_id] = [str(o) for o in d["obsids"]]
 
-    npz_files = [f for f in npz_files if not any(obs_id in f for obs_id in reject)]
-    night_ids = [re.search(r"\d{6}", f).group() for f in npz_files]
+    npz_files = [f for f in npz_files if night_id_from_path(f, pooled) not in reject]
+    night_ids = [night_id_from_path(f, pooled) for f in npz_files]
 
     return npz_files, reject, night_ids, reject_obsids
 
@@ -79,7 +112,7 @@ def chrono_split_nights(npz_files, night_ids, half):
         Filtered night IDs, restricted to the requested half.
     """
     n_nights = len(npz_files)
-    order = np.argsort([int(n) for n in night_ids])
+    order = sorted(range(n_nights), key=lambda i: night_sort_key(night_ids[i]))
     midpoint = n_nights // 2
     half_idx = order[:midpoint] if half == 0 else order[midpoint:]
 
@@ -200,8 +233,10 @@ def build_dataset(pointing, tv_subband, abs_directory, tol=0.33):
 
     Parameters
     ----------
-    pointing : int
-        Pointing index (one of 0, 1, 2, 3, 4).
+    pointing : int or str
+        Pointing index (one of 0, 1, 2, 3, 4), or POOLED_POINTING to take every
+        pointing's file, one entry per (night, pointing) block -- the way a
+        single night is stacked (see `fit.py --pool-pointings`).
     tv_subband : str
         TV subband string (one of 'subTV', 'TV6', 'TV7', 'TV8', 'TV9').
     abs_directory : str
@@ -221,14 +256,17 @@ def build_dataset(pointing, tv_subband, abs_directory, tol=0.33):
         Night ID -> list of full MWA obsid strings, for rejected nights only.
         See `reject_nights`.
     """
-    all_files = sorted(glob.glob(
-        os.path.join(abs_directory, f"data/raw_data/{tv_subband}/raw_data_*_p{pointing}.npz")
-    ))
+    pooled    = pointing == POOLED_POINTING
+    all_files = sorted(
+        glob.glob(os.path.join(abs_directory,
+                               f"data/tv_split/{tv_subband}/processed_*_p{'*' if pooled else pointing}.npz")),
+        key=lambda f: night_sort_key(night_id_from_path(f, pooled=True)),
+    )
 
     if not all_files:
         print(f"Warning: no files found for subband {tv_subband}, pointing {pointing}")
 
-    return reject_nights(all_files, tol=tol)
+    return reject_nights(all_files, tol=tol, pooled=pooled)
 
 
 def map_to_unit_interval(u):
@@ -347,7 +385,7 @@ def prepare_multiple_nights(samples, L, flags, night_ids, obsids, times):
     }
 
 
-def calculate_sigma_clean(samples, tv_subband_dict, tv_subband):
+def calculate_sigma_clean(samples, tv_subband_dict, tv_subband, nbls=None, nchans=None):
     """
     Calculate the expected thermal noise standard deviation for each night.
 
@@ -355,6 +393,13 @@ def calculate_sigma_clean(samples, tv_subband_dict, tv_subband):
     ----------
     samples : list of array-like
         Raw nightly data arrays.
+    tv_subband_dict : dict
+        Sub-band -> number of fine channels averaged (fallback when `nchans` is None).
+    nbls : sequence of int, optional
+        Per-night number of baselines averaged into the INS (from the npz
+        `nbls` key). Falls back to the Phase I value 128*127/2 if None.
+    nchans : sequence of int, optional
+        Per-night number of channels averaged (npz `nchan` key).
 
     Returns
     -------
@@ -362,11 +407,14 @@ def calculate_sigma_clean(samples, tv_subband_dict, tv_subband):
         Per-night thermal noise standard deviation.
     """
     C = 4/np.pi - 1
-    Nbl = 128*127/2  # Nbl = 8128
-    Nchannels = tv_subband_dict[tv_subband] # Channels averaged together
+    N = len(samples)
+    if nbls is None:
+        nbls = [128*127/2] * N  # Nbl = 8128, Phase I with no flagged tiles
+    if nchans is None:
+        nchans = [tv_subband_dict[tv_subband]] * N  # Channels averaged together
 
     sigma_clean = []
-    for sample in samples:
+    for sample, Nbl, Nchannels in zip(samples, nbls, nchans):
         valid_mask = np.isfinite(sample)
         valid_sample = sample[valid_mask]  # only consider valid samples
         mu_hat = np.median(valid_sample)
@@ -374,6 +422,29 @@ def calculate_sigma_clean(samples, tv_subband_dict, tv_subband):
         sigma_clean.append(np.sqrt((C*mu_hat**2)/(Nbl * Nchannels)))
 
     return jnp.asarray(sigma_clean)
+
+
+def rescale_to_noise(samples, sigma_clean, target_sigma):
+    """
+    Rescale every night's series by one common factor so that the median
+    per-night thermal noise equals `target_sigma`.
+
+    The RFI and Legendre priors (Section V.1) are in absolute data units, tuned
+    to the 2014 SSINS amplitudes, where the median noise was ~0.33 (the TV7/p0/xx
+    cutoff 2*med(sigma_noise) is 0.67). Data from another correlator or
+    preprocessor (e.g. MWAX via Birli) have another overall scale; rescaling them
+    keeps the priors at the same width relative to the noise as in the paper. One
+    factor for all nights leaves the model otherwise unchanged: background,
+    noise and residuals all scale linearly, and soft labels are invariant.
+
+    Returns
+    -------
+    samples : list of ndarray   Rescaled copies.
+    sigma_clean : jnp.ndarray   Rescaled noise.
+    factor : float              The factor applied.
+    """
+    factor = float(target_sigma / np.median(np.asarray(sigma_clean)))
+    return [np.asarray(s) * factor for s in samples], jnp.asarray(sigma_clean) * factor, factor
 
 
 # ----------------------------------
