@@ -15,6 +15,7 @@ import postprocessing_utils as pu
 from config import (
     ABS_DIR,
     JOB_MAP,
+    RUN_DIR,
     L,
 )
 
@@ -192,15 +193,12 @@ def postprocess_chains(L, tv_subband, pointing, polarization, run_dir, abs_dir=A
     idata_summary = az.summary(idata)
     plu.plot_convergence_metrics(idata_summary, savefig=True, savepath=savepath)
     plu.plot_trace_corner(idata,                savefig=True, savepath=savepath)
-    plu.plot_corner_mu_sigma(idata,             savefig=True, savepath=savepath)
-    plu.plot_corner_legendre(idata, night_ids=data_dict['night_ids'],
-                             savefig=True, savepath=savepath)
 
     # ---- Predictions --------------------------------------------------
     print("\nComputing background, residuals, and labels...")
     samples_dict             = pu.extract_samples(idata)
     mu_bg, z                 = pu.get_bg_residuals(data_dict, samples_dict)
-    soft_labels, hard_labels = pu.classify(z, samples_dict, sigma_clean=sigma_clean)
+    soft_labels, _ = pu.classify(z, samples_dict, sigma_clean=sigma_clean)
 
     mean_soft_labels = soft_labels.mean(axis=0)
     std_soft_labels  = soft_labels.std(axis=0)
@@ -232,15 +230,6 @@ def postprocess_chains(L, tv_subband, pointing, polarization, run_dir, abs_dir=A
                     savepath=savepath,
                     )
 
-    # ---- Goodness-of-fit metrics --------------------------------------
-    print("\nCalculating chi-squared and neg-log-pdf...")
-    chi2_median, chi2_lo, chi2_hi = pu.get_chi2(z, sigma_clean, clean_mask=(hard_labels == 0))
-    plu.plot_chisq(chi2_median, chi2_lo, chi2_hi, savepath=savepath, savefig=True)
-
-    nll_median, nll_lo, nll_hi = pu.get_neg_logpdf_rfi(z, samples_dict, rfi_mask=(hard_labels == 1))
-    plu.plot_nll(nll_median, nll_lo, nll_hi, savepath=savepath, savefig=True)
-
-
     # # ---- Residual histograms ------------------------------------------
     print("\nPlotting clean/RFI residual histograms...")
     plu.plot_clean_rfi_histograms(z, data_dict, samples_dict, sigma_clean, savepath=savepath, savefig=True)
@@ -263,8 +252,6 @@ def postprocess_chains(L, tv_subband, pointing, polarization, run_dir, abs_dir=A
         diagnostics     = diagnostics,
         samples_dict    = samples_dict,
         data_dict       = data_dict,
-        chi2            = (chi2_median, chi2_lo, chi2_hi),
-        nll             = (nll_median,  nll_lo,  nll_hi),
         residuals       = (residual_median, residual_std),
         rejected_obsids = rejected_obsids,
     )
@@ -287,12 +274,8 @@ if __name__ == "__main__":
                "  python postprocess.py 0 --run-dir out_chrono_split --half 0\n"
                "  python postprocess.py --n-jobs",
     )
-    cli.add_run_dir(parser, default="out",
-                    help="run directory to read chains/ from and write processed/ into")
     cli.add_half(parser)
     args = cli.parse_args(parser)
-
-    run_dir = cli.resolve_run_dir(args.run_dir, ABS_DIR)
 
     L, tv_subband, pointing, polarization = JOB_MAP[args.job_index]
 
@@ -304,7 +287,7 @@ if __name__ == "__main__":
         polarization = polarization,
         tv_subband   = tv_subband,
         half         = args.half,
-        run_dir      = run_dir,
+        run_dir      = RUN_DIR,
     )
 
-    postprocess_chains(L, tv_subband, pointing, polarization, run_dir, half=args.half)
+    postprocess_chains(L, tv_subband, pointing, polarization, RUN_DIR, half=args.half)

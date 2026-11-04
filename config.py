@@ -14,8 +14,8 @@ DATA_IN_DIR  = "/users/jmduchar/data/shared/big_dataset/"  # raw visibilities in
 HDF5_FILENAME             = "season_results.h5"
 SOFT_LABEL_SAMPLES_SUBDIR = "soft_label_samples"
 
-DATA_OUT_DIR  = os.path.join(ABS_DIR, "data/")           # pre-processed data output dir
-RUN_DIR       = os.path.join(ABS_DIR, "out_test_nov26/") # output dir for processed chains, etc.
+DATA_OUT_DIR  = os.path.join(ABS_DIR, "data/")        # pre-processed data output dir
+RUN_DIR       = os.path.join(ABS_DIR, "out_aug16/")   # output dir for processed chains, etc.
 UVFLAG_DIR    = os.path.join(DATA_OUT_DIR, "uvflag/")
 CB_PATH       = os.path.join(os.path.dirname(__file__), "coarse_bands_1D.npy")
 H5_PATH       = os.path.join(RUN_DIR, "processed/", HDF5_FILENAME)
@@ -51,3 +51,7 @@ JOB_MAP = {
         for pol in POLARIZATIONS
     )
 }
+
+# MWA GRIDNUM -> pointings east(+)/west(-) convention
+POINTING_DICT  = {0: 0, 1: -1, 2: 1, 3: -2, 4: 2}
+POINTING_ORDER = [3, 1, 0, 2, 4]

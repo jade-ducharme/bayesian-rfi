@@ -56,7 +56,7 @@ def locked_hdf5(path, mode='a', retries=20, wait=3.0):
 
 
 def write_results(h5_path, pointing, tv_subband, polarization,
-                  diagnostics, samples_dict, data_dict, chi2, nll, residuals,
+                  diagnostics, samples_dict, data_dict, residuals,
                   rejected_obsids):
     """
     Write all results for one (pointing, tv_subband, polarization) combination
@@ -72,8 +72,6 @@ def write_results(h5_path, pointing, tv_subband, polarization,
                     w_clean/    median, hdi_94_lo, hdi_94_hi, hdi_50_lo, hdi_50_hi
                     loc_rfi/    ...
                     scale_rfi/  ...
-                    chisq_per_night/   median, hdi_94_lo, hdi_94_hi, night_ids
-                    rfi_nll_per_night/ median, hdi_94_lo, hdi_94_hi, night_ids
                 labels/
                     soft_labels       (N_nights, T_max)
                     soft_labels_std   (N_nights, T_max)
@@ -84,8 +82,6 @@ def write_results(h5_path, pointing, tv_subband, polarization,
                     night_ids         (N_nights,)
                     lengths           (N_nights,)
     """
-    chi2_median, chi2_lo, chi2_hi = chi2
-    nll_median,  nll_lo,  nll_hi  = nll
     residual_median, residual_std = residuals
 
     night_ids       = data_dict['night_ids']
@@ -131,22 +127,6 @@ def write_results(h5_path, pointing, tv_subband, polarization,
             _write_scalar(grp, 'hdi_94_hi', hdi_outer[1])
             _write_scalar(grp, 'hdi_50_lo', hdi_inner[0])
             _write_scalar(grp, 'hdi_50_hi', hdi_inner[1])
-
-        # ---- posterior_summary/chisq_per_night ------------------------
-        cg = ps.require_group('chisq_per_night')
-        _write_dataset(cg, 'median',    chi2_median)
-        _write_dataset(cg, 'hdi_94_lo', chi2_lo)
-        _write_dataset(cg, 'hdi_94_hi', chi2_hi)
-        _write_dataset(cg, 'night_ids',
-                       np.array(night_ids, dtype=h5py.special_dtype(vlen=str)))
-
-        # ---- posterior_summary/rfi_nll_per_night ----------------------
-        ng = ps.require_group('rfi_nll_per_night')
-        _write_dataset(ng, 'median',    nll_median)
-        _write_dataset(ng, 'hdi_94_lo', nll_lo)
-        _write_dataset(ng, 'hdi_94_hi', nll_hi)
-        _write_dataset(ng, 'night_ids',
-                       np.array(night_ids, dtype=h5py.special_dtype(vlen=str)))
 
         # ---- labels ---------------------------------------------------
         lg = f.require_group(f"{root}/labels")
@@ -285,18 +265,6 @@ def read_season_results(h5_path):
                         for stat in GLOBAL_PARAM_STATS:
                             global_vals[f'{key}_{stat}'] = pgrp[stat][()]
 
-                    # ---- per-night chi2 / nll, keyed by night id -----------
-                    cg = ps['chisq_per_night']
-                    chi2_by_night = {
-                        int(night): (cg['median'][n], cg['hdi_94_lo'][n], cg['hdi_94_hi'][n])
-                        for n, night in enumerate(cg['night_ids'].asstr()[()])
-                    }
-                    ng = ps['rfi_nll_per_night']
-                    nll_by_night = {
-                        int(night): (ng['median'][n], ng['hdi_94_lo'][n], ng['hdi_94_hi'][n])
-                        for n, night in enumerate(ng['night_ids'].asstr()[()])
-                    }
-
                     # ---- per-timestep labels --------------------------------
                     lg          = grp['labels']
                     hard_labels = np.asarray(lg['hard_labels'])  # (N_nights, T_max)
@@ -313,10 +281,6 @@ def read_season_results(h5_path):
                     soft_labels_std = np.asarray(lg['soft_labels_std'])
 
                     for night_idx, (night, length) in enumerate(zip(night_ids, lengths)):
-                        chi2_med, chi2_lo, chi2_hi = chi2_by_night.get(
-                            night, (np.nan, np.nan, np.nan))
-                        nll_med, nll_lo, nll_hi = nll_by_night.get(
-                            night, (np.nan, np.nan, np.nan))
 
                         for t in range(length):
                             record = {
@@ -331,12 +295,6 @@ def read_season_results(h5_path):
                                 'soft_label_std'  : soft_labels_std[night_idx, t],
                                 'residual_median' : residual_median[night_idx, t],
                                 'residual_std'    : residual_std[night_idx, t],
-                                'chisq_median'    : chi2_med,
-                                'chisq_hdi_94_lo' : chi2_lo,
-                                'chisq_hdi_94_hi' : chi2_hi,
-                                'nll_median'      : nll_med,
-                                'nll_hdi_94_lo'   : nll_lo,
-                                'nll_hdi_94_hi'   : nll_hi,
                             }
                             record.update(global_vals)
                             records.append(record)

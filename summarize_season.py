@@ -11,20 +11,17 @@ import seaborn as sns
 
 plt.style.use('seaborn-v0_8-white')  # the style the paper figures are drawn in
 
-ABS_DIR = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"
+from config import (
+    HDF5_FILENAME,
+    POINTING_DICT,
+    POINTING_ORDER,
+    POINTINGS,
+    POLARIZATIONS,
+    RUN_DIR,
+    TV_SUBBANDS,
+)
 
-TV_SUBBANDS   = ['subTV', 'TV6', 'TV7', 'TV8', 'TV9']
-POINTINGS     = [0, 1, 2, 3, 4]
-POLARIZATIONS = ['xx', 'yy']
-
-# MWA GRIDNUM -> pointings east(+)/west(-) convention
-POINTING_DICT  = {0: 0, 1: -1, 2: 1, 3: -2, 4: 2}
-POINTING_ORDER = [3, 1, 0, 2, 4]
 MARKERS        = {'xx': 'o', 'yy': 'X'}
-
-# This script isn't parallel over anything --> it reads the whole season at once
-N_JOBS = 1
-
 
 def summarize_season(run_dir, half=None):
     """
@@ -46,7 +43,7 @@ def summarize_season(run_dir, half=None):
     prefix   = f"half{half}_" if half is not None else ""
     base_dir = os.path.join(run_dir, "processed")
     save_dir = os.path.join(base_dir, f"{prefix}seasonal_statistics")
-    h5_path  = os.path.join(base_dir, prefix + hdf5_utils.HDF5_FILENAME)
+    h5_path  = os.path.join(base_dir, prefix + HDF5_FILENAME)
 
     os.makedirs(save_dir, exist_ok=True)
     print(f"Reading {h5_path}")
@@ -69,7 +66,7 @@ def summarize_season(run_dir, half=None):
     # ----------------------------
 
     for pol in POLARIZATIONS:
-        fig, ax = plt.subplots(figsize=(8, 5))
+        _, ax = plt.subplots(figsize=(8, 5))
         subset = combo_df[combo_df['pol'] == pol].copy()
         subset['w_rfi_median'] = 1 - subset['w_clean_median']
         pivot  = subset.pivot(index='pointing', columns='tv_subband', values='w_rfi_median')
@@ -87,7 +84,7 @@ def summarize_season(run_dir, half=None):
     # ----------------------------
 
     for pol in POLARIZATIONS:
-        fig, ax = plt.subplots(figsize=(8, 5))
+        _, ax = plt.subplots(figsize=(8, 5))
         subset = combo_df[combo_df['pol'] == pol]
         pivot  = subset.pivot(index='pointing', columns='tv_subband', values='loc_rfi_median')
         pivot  = pivot.reindex(columns=TV_SUBBANDS, index=POINTINGS)
@@ -106,7 +103,7 @@ def summarize_season(run_dir, half=None):
     # ----------------------------
 
     for pol in POLARIZATIONS:
-        fig, ax = plt.subplots(figsize=(8, 5))
+        _, ax = plt.subplots(figsize=(8, 5))
         subset = combo_df[combo_df['pol'] == pol]
         pivot  = subset.pivot(index='pointing', columns='tv_subband', values='scale_rfi_median')
         pivot  = pivot.reindex(columns=TV_SUBBANDS, index=POINTINGS)
@@ -128,7 +125,7 @@ def summarize_season(run_dir, half=None):
     colors  = np.array(sns.color_palette("Paired")).reshape(-1, 2, 3)[:, ::-1].reshape(-1, 3)
     offsets = dict(zip(POINTING_ORDER, np.linspace(-0.36, 0.36, len(POINTING_ORDER))))
 
-    fig, ax = plt.subplots(figsize=(9, 3.5))
+    _, ax = plt.subplots(figsize=(9, 3.5))
 
     for cdx, (p, pol) in enumerate(series):
         subset = combo_df[(combo_df['pol'] == pol) &
@@ -165,50 +162,6 @@ def summarize_season(run_dir, half=None):
     plt.show()
 
     # ----------------------------
-    # Reduced chi-squared per night, grid over subband x pointing
-    # ----------------------------
-
-    night_df = df.drop_duplicates(subset=['pol', 'tv_subband', 'pointing', 'night'])
-
-    fig, axes = plt.subplots(len(TV_SUBBANDS), len(POINTINGS),
-                              figsize=(4 * len(POINTINGS), 3 * len(TV_SUBBANDS)),
-                              sharex=False, sharey=True)
-
-    for i, tv in enumerate(TV_SUBBANDS):
-        for j, p in enumerate(POINTINGS):
-            ax = axes[i][j]
-            for pol, color in zip(POLARIZATIONS, sns.color_palette()[:2]):
-                subset = night_df[
-                    (night_df['tv_subband'] == tv) &
-                    (night_df['pointing']   == p)  &
-                    (night_df['pol']        == pol)
-                ].sort_values('night')
-                if subset.empty:
-                    continue
-                ax.errorbar(
-                    subset['night'],
-                    subset['chisq_median'],
-                    yerr=[subset['chisq_median'] - subset['chisq_hdi_94_lo'],
-                          subset['chisq_hdi_94_hi'] - subset['chisq_median']],
-                    fmt='.', capsize=2, linewidth=0.8,
-                    label=pol, color=color, alpha=0.8
-                )
-            ax.axhline(1.0, linestyle='--', color='red', linewidth=0.8)
-            ax.set_title(f"{tv} p{p}", fontsize=8)
-            if j == 0:
-                ax.set_ylabel(r"Reduced $\chi^2$")
-            if i == len(TV_SUBBANDS) - 1:
-                ax.set_xlabel("Night")
-
-    handles = [plt.Line2D([0], [0], color=c, marker='o', label=pol)
-               for pol, c in zip(POLARIZATIONS, sns.color_palette()[:2])]
-    fig.legend(handles=handles, loc='upper right')
-    plt.suptitle(r"Reduced $\chi^2$ per night across all configurations", fontsize=14)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "chisq_per_night.png"), dpi=300, bbox_inches='tight')
-    plt.show()
-
-    # ----------------------------
     # Posterior w_rfi vs empirical RFI fraction (hard and soft labels)
     # ----------------------------
 
@@ -228,7 +181,7 @@ def summarize_season(run_dir, half=None):
     df_merged = label_frac.merge(df_posterior_wrfi, on=['pol', 'tv_subband', 'pointing'])
 
     for ldx, label in enumerate(['hard_label_frac', 'soft_label_frac']):
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True, sharex=True)
+        _, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True, sharex=True)
 
         for ax, pol in zip(axes, POLARIZATIONS):
             subset = df_merged[df_merged['pol'] == pol]
@@ -267,7 +220,7 @@ def summarize_season(run_dir, half=None):
         all_times  = subset['time_jd'].to_numpy()
         all_labels = subset['soft_label'].to_numpy()
 
-        fig, ax = plt.subplots(figsize=(18, 3))
+        _, ax = plt.subplots(figsize=(18, 3))
         ax.scatter(all_times, all_labels, s=0.5, alpha=0.3, rasterized=True)
         ax.set_xlabel("Julian Date")
         ax.set_ylabel("Soft label (p_rfi)")
@@ -285,23 +238,19 @@ if __name__ == "__main__":
     parser = cli.build_parser(
         description="Pipeline stage 4: season-level summary plots from one run's "
                     "aggregated results file. Single-task stage: job_index is always 0.",
-        n_jobs=N_JOBS,
+        n_jobs=1,
         epilog="Examples:\n"
                "  python summarize_season.py 0\n"
                "  python summarize_season.py 0 --run-dir out_chrono_split --half 0",
     )
-    cli.add_run_dir(parser, default="out",
-                    help="run directory to read processed/ from and write plots into")
     cli.add_half(parser)
     args = cli.parse_args(parser)
-
-    run_dir = cli.resolve_run_dir(args.run_dir, ABS_DIR)
 
     cli.print_config(
         "Seasonal statistics",
         job_index = args.job_index,
         half      = args.half,
-        run_dir   = run_dir,
+        run_dir   = RUN_DIR,
     )
 
-    summarize_season(run_dir, half=args.half)
+    summarize_season(RUN_DIR, half=args.half)

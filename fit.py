@@ -172,8 +172,7 @@ if __name__ == "__main__":
                "  python fit.py 0 --run-dir out_random --split-method random --half 1 --seed 17\n"
                "  python fit.py --n-jobs",
     )
-    cli.add_run_dir(parser, default="out",
-                    help="run directory to write chains/ into")
+
     cli.add_half(parser)
     parser.add_argument(
         "--split-method",

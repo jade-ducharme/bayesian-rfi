@@ -15,11 +15,11 @@ from pyuvdata import UVFlag
 warnings.filterwarnings("ignore")
 
 from config import (
-    ABS_DIR,
     H5_PATH,
     N_JOBS,
     POL_TO_IDX,
     POLARIZATIONS,
+    RUN_DIR,
     TV_BANDS,
     TV_SUBBANDS,
     UVFLAG_DIR,
@@ -243,20 +243,16 @@ if __name__ == "__main__":
                "  python propagate.py 0 --run-dir out_chrono_split\n"
                "  python propagate.py --n-jobs",
     )
-    cli.add_run_dir(parser, default="out",
-                    help="run directory to read processed/season_results.h5 from")
-    args = cli.parse_args(parser)
 
-    run_dir = cli.resolve_run_dir(args.run_dir, ABS_DIR)
-    h5_path = os.path.join(run_dir, "processed", hdf5_utils.HDF5_FILENAME)
+    args = cli.parse_args(parser)
 
     cli.print_config(
         "Propagate flags",
         job_index  = args.job_index,
         n_jobs     = N_JOBS,
-        run_dir    = run_dir,
-        h5_path    = h5_path,
+        run_dir    = RUN_DIR,
+        h5_path    = H5_PATH,
         uvflag_dir = UVFLAG_DIR,
     )
 
-    propagate_flags(args.job_index, N_JOBS, h5_path=h5_path)
+    propagate_flags(args.job_index, N_JOBS, h5_path=H5_PATH)
