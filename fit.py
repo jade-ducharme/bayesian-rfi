@@ -26,6 +26,7 @@ from config import (
     ABS_DIR,
     JOB_MAP,
     RANDOM_SEED,
+    RUN_DIR,
     L,
 )
 
@@ -198,11 +199,6 @@ if __name__ == "__main__":
         parser.error("--split-method and --half must be given together "
                      "(omit both for a full-season fit)")
 
-    run_dir = args.run_dir
-    if args.split_method == "random":
-        run_dir = f"{run_dir}_{args.seed}"
-    run_dir = cli.resolve_run_dir(run_dir, ABS_DIR)
-
     L, tv_subband, pointing, pol = JOB_MAP[args.job_index]
 
     cli.print_config(
@@ -215,9 +211,9 @@ if __name__ == "__main__":
         split_method = args.split_method,
         half         = args.half,
         seed         = args.seed,
-        run_dir      = run_dir,
+        run_dir      = RUN_DIR,
     )
 
     # Run the mixture model
-    run_mixture_model(pointing, L, pol, tv_subband, args.seed, run_dir,
+    run_mixture_model(pointing, L, pol, tv_subband, args.seed, RUN_DIR,
                         split_method=args.split_method, half=args.half)

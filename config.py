@@ -8,16 +8,17 @@ import os
 import numpy as np
 
 # Files and directories
-ABS_DIR                   = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"  # top-level dir
-DATA_IN_DIR               = "/users/jmduchar/data/shared/big_dataset/"  # raw visibilities input dir
+ABS_DIR      = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"  # top-level dir
+DATA_IN_DIR  = "/users/jmduchar/data/shared/big_dataset/"  # raw visibilities input dir
 
 HDF5_FILENAME             = "season_results.h5"
 SOFT_LABEL_SAMPLES_SUBDIR = "soft_label_samples"
 
-DATA_OUT_DIR              = os.path.join(ABS_DIR, "out/")        # pre-processed data output dir
-UVFLAG_DIR                = os.path.join(ABS_DIR, "data/uvflag/")
-CB_PATH                   = os.path.join(os.path.dirname(__file__), "coarse_bands_1D.npy")
-H5_PATH                   = os.path.join(ABS_DIR, "out/processed/", HDF5_FILENAME)
+DATA_OUT_DIR  = os.path.join(ABS_DIR, "data/")           # pre-processed data output dir
+RUN_DIR       = os.path.join(ABS_DIR, "out_test_nov26/") # output dir for processed chains, etc.
+UVFLAG_DIR    = os.path.join(DATA_OUT_DIR, "uvflag/")
+CB_PATH       = os.path.join(os.path.dirname(__file__), "coarse_bands_1D.npy")
+H5_PATH       = os.path.join(RUN_DIR, "processed/", HDF5_FILENAME)
 
 # Experiment-specific variables
 TV_SUBBANDS   = ['subTV', 'TV6', 'TV7', 'TV8', 'TV9']

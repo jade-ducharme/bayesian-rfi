@@ -1,184 +1,98 @@
 # bayesian-rfi
 
-A pipeline for statistically characterizing RFI in MWA (Murchison Widefield Array) radio-astronomy visibilities,
-originally presented in 
-[*Interference Meets Inference: Bayesian Time-Series Modeling of Radio-Frequency Interference*](https://arxiv.org/abs/2609.26904).
+A Bayesian pipeline for detecting and characterizing radio-frequency interference (RFI) in Murchison Widefield Array (MWA) observations.
 
-Raw correlator FITS files are reduced with [SSINS](https://github.com/mwilensky768/SSINS), then [numpyro](https://num.pyro.ai/en/stable/) is used to fit a hierarchical Bayesian mixture model per
-(pointing, TV sub-band, polarization) combination to probabilistically classify every time-sample as
-"clean" vs. "RFI"-contaminated. Results are aggregated into a single HDF5 file, and the
-resulting soft labels (continuous RFI probability) and their Bayesian error bars are
-propagated back into [pyuvdata](https://pyuvdata.readthedocs.io/en/latest/) `UVFlag` objects (metric mode) for use downstream.
+Based on [*Interference Meets Inference: Bayesian Time-Series Modeling of Radio-Frequency Interference*](https://arxiv.org/abs/2609.26904).
 
-## Repository layout
+The pipeline uses [SSINS](https://github.com/mwilensky768/SSINS) to preprocess observations and [NumPyro](https://num.pyro.ai/en/stable/) to estimate the probability that each time sample contains RFI. Results are saved to HDF5 and can be written to [pyuvdata `UVFlag`](https://pyuvdata.readthedocs.io/en/latest/uvflag.html) files.
 
-| Path | What it is |
+## Setup
+
+1. Install the required Python packages: `pyuvdata`, `SSINS`, `numpyro`, `jax`, `arviz`, `h5py`, `astropy`, `pandas`, `matplotlib`, and `seaborn`.
+2. Edit the paths in `config.py` for your system.
+
+Run the commands below from the repository root.
+
+## Pipeline
+
+Run these five stages **in order**. Stages with multiple tasks should be run for every valid task index, typically using a SLURM job array.
+
+| Stage | Script | Purpose |
+| --- | --- | --- |
+| 1 | `preprocess.py` | Reduce raw FITS data with SSINS and generate per-sub-band time series. |
+| 2 | `fit.py` | Fit a Bayesian mixture model for each pointing, TV sub-band, and polarization. |
+| 3 | `postprocess.py` | Check convergence, classify samples, and save results and diagnostics. |
+| 4 | `summarize_season.py` | Generate season-level plots and statistics. |
+| 5 | `propagate.py` | Write RFI probabilities back into `UVFlag` files. |
+
+### Commands
+
+```bash
+# 1. Preprocess observations (one task per night/pointing)
+python preprocess.py <job_index>
+
+# 2. Fit the model (one task per pointing/sub-band/polarization)
+python fit.py <job_index>
+
+# 3. Process the fitted chains (same task grid as fit.py)
+python postprocess.py <job_index>
+
+# 4. Summarize the season (one task only)
+python summarize_season.py 0
+
+# 5. Update UVFlag files (tasks cover separate groups of files)
+python propagate.py <job_index>
+```
+
+Replace `<job_index>` with an integer. To see how many tasks a stage needs, run:
+
+```bash
+python fit.py --n-jobs        # 50 tasks: indices 0–49
+python preprocess.py --n-jobs # task count depends on the data
+python propagate.py --n-jobs
+```
+
+To run `fit.py` as a SLURM array, for example:
+
+```bash
+#SBATCH --array=0-49
+python fit.py "$SLURM_ARRAY_TASK_ID"
+```
+
+Each stage supports `--help`
+
+### Main outputs
+
+| Stage | Output |
 | --- | --- |
-| `preprocess.py` | Stage 1 — SSINS reduction of raw visibilities |
-| `fit.py` | Stage 2 — fit the mixture model |
-| `postprocess.py` | Stage 3 — chain diagnostics, classification, results store |
-| `summarize_season.py` | Stage 4 — season-level aggregation, summary plots |
-| `propagate.py` | Stage 5 — write labels back into `UVFlag` files |
-| `mixture_model.py` | The NumPyro model, dataset construction, night selection |
-| `utils/` | Shared helpers: `cli`, `hdf5_utils`, `mm_utils`, `preprocessing_utils`, `postprocessing_utils`, `plotting_utils` |
+| Preprocess | Per-sub-band `.npz` time series and initial `UVFlag` `.h5` files |
+| Fit | Posterior chains in `<RUN_DIR>/chains/` (`.nc`), plus notes and selected-night lists |
+| Postprocess | `<RUN_DIR>/processed/season_results.h5`, diagnostic plots, and soft-label samples |
+| Summarize | Plots in `<RUN_DIR>/processed/seasonal_statistics/` |
+| Propagate | **Updates the existing `UVFlag` files in place** |
 
-## Environment
+The propagated metric is the posterior mean RFI probability. Its posterior standard deviation is stored in `weights_array` (an experimental convention, not a standard inverse-variance weight). Sub-bands excluded from fitting (due to e.g. excessive SSINS flags) are assigned a metric of `1.0` and a weight of `0.0`.
 
-Key dependencies: `pyuvdata`, `SSINS`, `numpyro`, `jax`, `arviz`, `h5py`, `astropy`, `pandas`,
-`matplotlib`/`seaborn`.
+## Optional: half-season tests
 
-## Command-line convention
-
-Each stage is meant to run as one task of a SLURM job array, so every stage takes the **same first
-argument**: `job_index`, the index of this task within that stage's job grid (under SLURM, pass
-`$SLURM_ARRAY_TASK_ID`). Everything else is an optional flag. The shared part of the interface
-lives in `utils/cli.py`.
+For reproducibility checks, split the observations into two halves and fit them separately. Use `--half 0` or `--half 1`.
 
 ```bash
-python <stage>.py <job_index> [--run-dir DIR] [--half {0,1}] [stage-specific flags]
-python <stage>.py --n-jobs        # size of this stage's job grid; nothing else runs
-python <stage>.py --help          # full options and examples for that stage
+# Example: first chronological half
+python fit.py <job_index> --run-dir out_chrono --split-method chrono --half 0
+python postprocess.py <job_index> --run-dir out_chrono --half 0
+python summarize_season.py 0 --run-dir out_chrono --half 0
 ```
 
-* `--run-dir` sets the output file path. Defaults to `out`.
-* `--n-jobs` corresponds to the total number of (pointing, TV sub-band, polarization) combinations
+Use `--split-method random --seed 17` instead for a reproducible random split. For random splits, the seed is appended to the run directory name. Split results are saved separately from full-season results.
 
-  ```bash
-  python fit.py --n-jobs        # -> 50, so e.g. #SBATCH --array=0-49
-  ```
+## Repository files
 
-* `summarize_season.py` isn't parallel over anything, so its grid has exactly one task and its
-  only valid `job_index` is `0`. It takes the argument anyway, for consistency
-
-The batch submission scripts are specific to the cluster this was developed on and are not part
-of this repository, but a wrapper for any stage is a one-liner; e.g.
-
-```bash
-#!/bin/bash
-#SBATCH --array=0-49            # must equal `python fit.py --n-jobs`
-python fit.py "$SLURM_ARRAY_TASK_ID" --run-dir out
-```
-
-## Running the pipeline
-
-Stages are listed in execution order. Each one consumes the previous one's output.
-
-### 1. Preprocess raw visibilities — `preprocess.py`
-
-```bash
-python preprocess.py <job_index>          # 0 .. N, one per night/pointing
-```
-
-One task per (night, pointing). Groups raw `.fits` observations into (night, pointing) sets,
-builds an `SS`/`INS` object per obsid, runs an SSINS match filter tuned for DTV shapes
-(`TV6`–`TV9`) plus narrowband/streak RFI, seeds an initial `UVFlag` with coarse-band and
-edge-time flags, and writes per-sub-band frequency-averaged metric time series (`.npz`) plus
-one `UVFlag` file per obsid.
-
-WARNING: `DATA_DIR` (location of raw input data) and `OUT_DIR` (location of output processed data) 
-are hardcoded in `preprocess.py`; you must update these!
-
-**Out:** `{OUT_DIR}/tv_split/{tv_subband}/processed_{obsn}_p{pointing}.npz`, `{OUT_DIR}/uvflag/{obsid}_flags.h5`
-
-### 2. Fit the mixture model — `fit.py`
-
-We retain the option to run a random or chronological split of the data for model testing/validation
-purposes. More info provided below.
-
-```bash
-python fit.py <job_index>                                          # full season, into default out/ directory
-python fit.py <job_index> --run-dir out_chrono_split \
-                          --split-method chrono --half 0           # chronological half-split
-python fit.py <job_index> --run-dir out_random \
-                          --split-method random --half 1 --seed 17 # random half-split
-```
-
-One task per (pointing, TV sub-band, polarization). Loads every night's `.npz` for that
-combination (dropping nights that exceed the SSINS flagged-fraction tolerance), fits the
-hierarchical mixture model with NUTS across 48 chains, and writes the posterior plus a notes
-sidecar. The nights actually used are written verbatim to a `..._nights.txt` sidecar so stage 3
-can replay exactly the same set (e.g. in case of random split)
-
-With `--split-method random`, the seed is appended to the run directory name
-(`out_random` + seed 17 → `out_random_17`), so different seeds never collide.
-
-**Out:** `{run_dir}/chains/chains_{tv}_p{pointing}_pol{pol}[_half{N}]_{timestamp}.{nc,txt}` and
-`..._nights.txt`
-
-### 3. Postprocess the chains — `postprocess.py`
-
-```bash
-python postprocess.py <job_index>                                  # full season, from default out/ directory
-python postprocess.py <job_index> --run-dir out_chrono_split --half 0
-```
-
-Same job grid as stage 2. Loads the most recent matching `.nc` chains file, drops "stuck" chains,
-recomputes convergence diagnostics, reconstructs per-night backgrounds/residuals, classifies
-every sample (soft + hard labels), computes goodness-of-fit, writes diagnostic plots, and
-appends everything to a shared `.h5` results file. The full per-draw soft labels are far too 
-big for that shared file and go to their own per-run HDF5 file.
-
-**Out:** `{run_dir}/processed/season_results.h5` (or `half{N}_season_results.h5`),
-`{run_dir}/processed/processed_{...}/` plots, `{run_dir}/processed/soft_label_samples/`
-
-### 4. Season-level statistics — `summarize_season.py`
-
-```bash
-python summarize_season.py 0                           # full season, out/
-python summarize_season.py 0 --run-dir out_chrono_split --half 0
-```
-
-Reads the whole `season_results.h5` into one
-tidy dataframe and produces season-level plots: heatmaps of `w_rfi`/`loc_rfi`/`scale_rfi` vs.
-pointing/sub-band, per-night reduced chi-squared, posterior-vs-empirical RFI fraction, and the RFI
-responsibility time series.
-
-**Out:** `{run_dir}/processed/[half{N}_]seasonal_statistics/`
-
-### 5. Propagate labels into the UVFlag files — `propagate.py`
-
-```bash
-python propagate.py <job_index>                        # default: reads out/processed/season_results.h5
-```
-
-Each task owns a disjoint chunk of the `UVFlag` files.
-Converts each file to metric mode and writes the continuous soft label (posterior mean RFI
-probability) into `metric_array` and its Bayesian error bar (posterior std) into
-`weights_array`. Nights that were rejected from the fit have no posterior to look up at all, so
-their sub-bands are force-set to metric=1.0 / weights=0.0.
-
-Note that this is all experimental and subject to change. See https://pyuvdata.readthedocs.io/en/latest/uvflag.html
-
-**Out:** `data*/uvflag/{obsid}_flags.h5`, rewritten in place
-
-## Half-season splits
-
-Stages 2–4 accept a half-split for reproducibility checks: fit each half of the season
-separately and compare posteriors. `--split-method chrono` sorts nights by time and splits at
-the midpoint; `--split-method random` shuffles them first (seeded by `--seed`). A full run of
-one half looks like:
-
-```bash
-python fit.py         <job_index> --run-dir out_chrono_split --split-method chrono --half 0
-python postprocess.py <job_index> --run-dir out_chrono_split --half 0
-python summarize_season.py 0      --run-dir out_chrono_split --half 0
-```
-
-Half-split runs write `half{N}_season_results.h5` alongside (not on top of) the full-season
-store, and their chains are tagged `_half{N}_` in the filename so the two kinds are never mixed.
-
-## Debugging a single task
-
-Nothing about a stage requires a scheduler: run it directly with the task index it would have
-received, and it does exactly that task.
-
-```bash
-python postprocess.py 7 --run-dir out_chrono_split --half 0
-```
-
-`--help` on any stage prints its options and worked examples; `--n-jobs` prints how many tasks
-that stage's grid has.
+- `config.py` — shared settings and job definitions
+- `mixture_model.py` — model and dataset construction
+- `preprocess.py`, `fit.py`, `postprocess.py`, `summarize_season.py`, `propagate.py` — pipeline stages
+- `utils/` — shared command-line, I/O, modeling, and plotting helpers
 
 ## Contact
 
-Any questions regarding this repository can be directed to jade_ducharme@brown.edu
+Questions: jade_ducharme@brown.edu

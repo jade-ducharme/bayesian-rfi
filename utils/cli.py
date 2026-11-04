@@ -3,7 +3,6 @@ Shared command-line interface for the top-level pipeline scripts.
 """
 
 import argparse
-import os
 
 _N_JOBS_DEST = "_n_jobs"
 
@@ -73,23 +72,6 @@ def parse_args(parser, argv=None):
     return args
 
 
-def add_run_dir(parser, default, help=None):
-    """
-    Add the `--run-dir` option shared by every stage that reads or writes a
-    run's output tree (`{run_dir}/chains/`, `{run_dir}/processed/`, ...).
-
-    The value may be absolute, or relative to the project root -- see
-    `resolve_run_dir`.
-    """
-    parser.add_argument(
-        "--run-dir",
-        default=default,
-        metavar="DIR",
-        help=(help or "run output directory, absolute or relative to the "
-                      "project root") + f" (default: {default})",
-    )
-
-
 def add_half(parser):
     """
     Add the `--half` option shared by the stages that support half-season
@@ -102,18 +84,6 @@ def add_half(parser):
         default=None,
         help="restrict to half the season (0 or 1); omit for a full-season run",
     )
-
-
-def resolve_run_dir(run_dir, abs_dir):
-    """
-    Resolve a `--run-dir` value to an absolute path.
-
-    Absolute paths are used as given; anything else is interpreted relative to
-    the project root
-    """
-    if os.path.isabs(run_dir):
-        return run_dir
-    return os.path.join(abs_dir, run_dir)
 
 
 def print_config(title, **fields):
