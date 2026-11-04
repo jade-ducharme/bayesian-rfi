@@ -12,28 +12,11 @@ import pandas as pd
 import plotting_utils as plu
 import postprocessing_utils as pu
 
-# ----------------------------
-# Globals
-# ----------------------------
-
-ABS_DIR       = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"
-TV_SUBBANDS   = ['subTV', 'TV6', 'TV7', 'TV8', 'TV9']
-POINTINGS     = [0, 1, 2, 3, 4]
-POLARIZATIONS = ['xx', 'yy']
-L             = 24
-
-# Keep every SOFT_LABEL_THIN-th draw of each chain
-SOFT_LABEL_THIN = 1
-
-JOB_MAP = {
-    idx: (L, tv, p, pol)
-    for idx, (tv, p, pol) in enumerate(
-        (tv, p, pol)
-        for tv   in TV_SUBBANDS
-        for p    in POINTINGS
-        for pol  in POLARIZATIONS
-    )
-}
+from config import (
+    ABS_DIR,
+    JOB_MAP,
+    L,
+)
 
 # ----------------------------
 # Functions
@@ -135,7 +118,6 @@ def postprocess_chains(L, tv_subband, pointing, polarization, run_dir, abs_dir=A
         3. Plot convergence diagnostics
         4. Compute and save background, residuals, and classification labels
         5. Plot per-night predictions
-        6. Compute and plot chi-squared and RFI neg-log-pdf
         7. Save posterior summary
 
     Parameters
@@ -239,7 +221,6 @@ def postprocess_chains(L, tv_subband, pointing, polarization, run_dir, abs_dir=A
         tv_subband   = tv_subband,
         polarization = polarization,
         data_dict    = data_dict,
-        thin         = SOFT_LABEL_THIN,
         source_file  = output_file,
     )
 

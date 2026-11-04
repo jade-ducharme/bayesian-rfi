@@ -1,6 +1,8 @@
 # bayesian-rfi
 
-A pipeline for statistically characterizing RFI in MWA (Murchison Widefield Array) radio-astronomy visibilities.
+A pipeline for statistically characterizing RFI in MWA (Murchison Widefield Array) radio-astronomy visibilities,
+originally presented in 
+[*Interference Meets Inference: Bayesian Time-Series Modeling of Radio-Frequency Interference*](https://arxiv.org/abs/2609.26904).
 
 Raw correlator FITS files are reduced with [SSINS](https://github.com/mwilensky768/SSINS), then [numpyro](https://num.pyro.ai/en/stable/) is used to fit a hierarchical Bayesian mixture model per
 (pointing, TV sub-band, polarization) combination to probabilistically classify every time-sample as
@@ -80,6 +82,9 @@ are hardcoded in `preprocess.py`; you must update these!
 
 ### 2. Fit the mixture model — `fit.py`
 
+We retain the option to run a random or chronological split of the data for model testing/validation
+purposes. More info provided below.
+
 ```bash
 python fit.py <job_index>                                          # full season, into default out/ directory
 python fit.py <job_index> --run-dir out_chrono_split \
@@ -94,9 +99,6 @@ hierarchical mixture model with NUTS across 48 chains, and writes the posterior 
 sidecar. The nights actually used are written verbatim to a `..._nights.txt` sidecar so stage 3
 can replay exactly the same set (e.g. in case of random split)
 
-The option to run a random or chronological split of the data is included for model testing/validation
-purposes.
-
 With `--split-method random`, the seed is appended to the run directory name
 (`out_random` + seed 17 → `out_random_17`), so different seeds never collide.
 
@@ -110,12 +112,11 @@ python postprocess.py <job_index>                                  # full season
 python postprocess.py <job_index> --run-dir out_chrono_split --half 0
 ```
 
-Same job grid as stage 2. Loads the most recent matching chains file, drops "stuck" chains,
+Same job grid as stage 2. Loads the most recent matching `.nc` chains file, drops "stuck" chains,
 recomputes convergence diagnostics, reconstructs per-night backgrounds/residuals, classifies
 every sample (soft + hard labels), computes goodness-of-fit, writes diagnostic plots, and
-appends everything to the shared results store behind a file lock (safe for concurrent array
-tasks). The full per-draw soft labels are far too big for that shared file and go to their own
-per-run HDF5 file.
+appends everything to a shared `.h5` results file. The full per-draw soft labels are far too 
+big for that shared file and go to their own per-run HDF5 file.
 
 **Out:** `{run_dir}/processed/season_results.h5` (or `half{N}_season_results.h5`),
 `{run_dir}/processed/processed_{...}/` plots, `{run_dir}/processed/soft_label_samples/`
@@ -146,7 +147,7 @@ probability) into `metric_array` and its Bayesian error bar (posterior std) into
 `weights_array`. Nights that were rejected from the fit have no posterior to look up at all, so
 their sub-bands are force-set to metric=1.0 / weights=0.0.
 
-Note that this is all experimental and subject to change.
+Note that this is all experimental and subject to change. See https://pyuvdata.readthedocs.io/en/latest/uvflag.html
 
 **Out:** `data*/uvflag/{obsid}_flags.h5`, rewritten in place
 
@@ -177,3 +178,7 @@ python postprocess.py 7 --run-dir out_chrono_split --half 0
 
 `--help` on any stage prints its options and worked examples; `--n-jobs` prints how many tasks
 that stage's grid has.
+
+## Contact
+
+Any questions regarding this repository can be directed to jade_ducharme@brown.edu

@@ -1,12 +1,5 @@
 """
 Figure-making for the pipeline's diagnostic plots.
-
-The per-night, corner and residual-histogram figures here are the same ones
-that go into the paper: the drawing code was lifted from the paper-figure
-notebooks and scripts in `__make_paper_figs/` so that a stage-3 run and a
-paper figure can't drift apart. Their call signatures are unchanged, so
-`postprocess.py` drives them exactly as before -- only what comes out of them
-is different.
 """
 
 import os
@@ -24,59 +17,27 @@ from scipy.stats import norm, skewcauchy
 
 import mixture_model
 
-# The style every paper figure was made in. The '-white' variant differs from
-# plain 'seaborn-v0_8' only in dropping the grey axes background and grid,
-# which is what lets the light grey posterior bands below read as posterior
-# bands rather than as part of the axes.
 plt.style.use('seaborn-v0_8-white')
 
-# ----------------------------
-# Shared style: RFI colour code
-# ----------------------------
-# Every per-sample marker in every panel is coloured by which flagger called it
-# RFI, so a sample can be followed by eye from the data panel down through the
-# residual and soft-label panels.
 C_MODEL = "#04D9FF"
 C_SSINS = "lime"
 C_BOTH  = "red"
 
-# Drawn (and listed in the legend) in this order -- don't reorder. `s` is a
-# scatter marker size: points SQUARED, i.e. an area. Only the square and the
-# diamond are outlined; the star is drawn bare.
 RFI_STYLES = {
-    "model_only": dict(label="RFI: model only", marker="s", color=C_MODEL,
-                       s=18, zorder=3, edge=True),
-    "ssins_only": dict(label="RFI: SSINS only", marker="D", color=C_SSINS,
-                       s=12, zorder=4, edge=True),
-    "both":       dict(label="RFI: both",       marker="*", color=C_BOTH,
-                       s=18, zorder=5, edge=False),
+    "model_only": {'label': "RFI: model only", 'marker': "s", 'color': C_MODEL,
+                       's': 18, 'zorder': 3, 'edge': True},
+    "ssins_only": {'label': "RFI: SSINS only", 'marker': "D", 'color': C_SSINS,
+                       's': 12, 'zorder': 4, 'edge': True},
+    "both":       {'label': "RFI: both",       'marker': "*", 'color': C_BOTH,
+                       's': 18, 'zorder': 5, 'edge': False},
 }
 
-# Widths of the shaded/errorbar posterior intervals, in posterior standard
-# deviations. The background band is drawn wider than the residual and
-# soft-label error bars purely for legibility at the scale of the data panel.
 N_SIGMA_BG        = 10
 N_SIGMA_ERRORBARS = 5
-
-# A star encloses much less ink than a square or diamond of the same nominal
-# area -- its points are thin -- so it reads small wherever it isn't sitting
-# out on an open data curve. The residual and soft-label panels, where it has
-# to be picked out of a dense band of grey/black dots, size it up; the data
-# panel keeps the smaller size.
 ERRORBAR_STAR_SIZE = 45
 
 
 def markersize(s):
-    """
-    Convert a scatter marker size to the equivalent `Line2D` marker size.
-
-    The two APIs used across these panels do NOT take the same units:
-    `Axes.scatter` sizes markers by AREA in points squared, while the markers
-    `Axes.errorbar` draws are `Line2D` markers sized by DIAMETER in points.
-    Both scale the same unit marker path, so matching them exactly is just
-    sqrt -- without it a category's markers come out visibly bigger in the
-    residual/soft-label panels than in the data panel.
-    """
     return np.sqrt(s)
 
 
@@ -95,9 +56,7 @@ def rfi_masks(model_mask, ssins_mask):
     Returns
     -------
     dict
-        Category name -> boolean mask, keyed to match `RFI_STYLES`. The masks
-        are disjoint; samples in none of them are clean by both measures and
-        are left to the panel's base series.
+        Category name -> boolean mask
     """
     model_mask = np.asarray(model_mask).astype(bool)
     ssins_mask = np.asarray(ssins_mask).astype(bool)
@@ -119,7 +78,7 @@ def _styles(star_size=None):
 
 
 def scatter_rfi(ax, x, y, masks, star_size=None, label=True):
-    """Overlay the flagged samples on a data panel, one call per category."""
+    """Overlay the flagged samples on a data panel"""
     for name, style in _styles(star_size).items():
         mask = masks[name]
         ax.scatter(
@@ -129,16 +88,13 @@ def scatter_rfi(ax, x, y, masks, star_size=None, label=True):
             color=style['color'],
             zorder=style['zorder'],
             label=style['label'] if label else None,
-            **(dict(edgecolors="black", linewidths=0.4) if style['edge'] else {}),
+            **({'edgecolors': "black", 'linewidths': 0.4} if style['edge'] else {}),
         )
 
 
 def errorbar_rfi(ax, x, y, yerr, masks, star_size=None):
     """
-    Overlay the flagged samples on an errorbar panel, one call per category.
-
-    Unlabelled on purpose: the colour code is already spelled out in the
-    legend of the data panel above.
+    Overlay the flagged samples on an errorbar panel
     """
     for name, style in _styles(star_size).items():
         mask = masks[name]
@@ -150,29 +106,18 @@ def errorbar_rfi(ax, x, y, yerr, masks, star_size=None):
             ecolor=style['color'],
             elinewidth=0.8,
             zorder=style['zorder'],
-            **(dict(markeredgecolor="black", markeredgewidth=0.4)
+            **({'markeredgecolor': "black", 'markeredgewidth': 0.4}
                if style['edge'] else {}),
         )
 
 
 def _moments(arr, ndx, stop):
-    """
-    Posterior mean and std over draws of one night's slice of an (S, N, T)
-    array, trimmed to its `stop` valid timesteps and reduced in float64.
-
-    The float64 cast is the point of this helper. The chains are float32, and
-    a float32 reduction over ~144,000 draws of a quantity as large as the
-    background (~780) relative to its posterior spread (~0.06) is dominated by
-    accumulation error -- widen first, reduce second.
-    """
     arr = np.asarray(arr[:, ndx, :stop], dtype=np.float64)
 
     return arr.mean(axis=0), arr.std(axis=0)
 
 
 def plot_convergence_metrics(idata_summary, savefig=False, savepath=None, show=False):
-    """
-    """
     plt.figure(figsize=(6,3))
     plt.hist(np.array(idata_summary['r_hat'],dtype=float),bins=50)
     plt.title("Histogram of r-hat values for all sampled parameters, across all chains")
@@ -202,11 +147,6 @@ def plot_convergence_metrics(idata_summary, savefig=False, savepath=None, show=F
 def plot_trace_corner(idata, savefig=False, savepath=None, show=False):
     """
     Trace plots and a corner plot of the three global mixture parameters.
-
-    The corner plot is the paper's (`__make_paper_figs/make_corner_plots.ipynb`):
-    it shows w_rfi rather than its complement w_clean -- the RFI occupancy is
-    the quantity of interest, and it's what every other figure and table
-    quotes -- with the parameters labelled as they are in the paper.
     """
     az.plot_trace(idata, var_names=[
                     'loc_rfi', 
@@ -248,63 +188,10 @@ def plot_trace_corner(idata, savefig=False, savepath=None, show=False):
     else:
         plt.close(fig)
 
-def plot_corner_mu_sigma(idata, savefig=False, savepath=None, show=False):
-    """
-    """
-    mu_beta_samples = (
-        idata.posterior['mu_beta']
-        .stack(sample=('chain', 'draw'))
-        .transpose('sample', ...)
-        .values
-    )
-
-    degree = mu_beta_samples.shape[-1]
-    labels = [f"mu_beta[{i}]" for i in range(degree)]
-
-    corner.corner(
-        mu_beta_samples,
-        labels=labels,
-        show_titles=True
-    )
-    plt.suptitle("mu_beta for each L mode", fontsize=60)
-    if savefig:
-        plt.savefig(os.path.join(savepath,"mu_beta_corner.png"), dpi=300, bbox_inches='tight')
-    if show:
-        plt.show()
-    else:
-        plt.close()
-
-    sigma_beta_samples = (
-        idata.posterior['sigma_beta']
-        .stack(sample=('chain', 'draw'))
-        .transpose('sample', ...)
-        .values
-    )
-
-    degree = sigma_beta_samples.shape[-1]
-    labels = [f"sigma_beta[{i}]" for i in range(degree)]
-
-    corner.corner(
-        sigma_beta_samples,
-        labels=labels,
-        show_titles=True
-    )
-    plt.suptitle("sigma_beta for each L mode", fontsize=60)
-    if savefig:
-        plt.savefig(os.path.join(savepath,"sigma_beta_corner.png"), dpi=300, bbox_inches='tight')
-    if show:
-        plt.show()
-    else:
-        plt.close()
-
 
 def night_dates(night_ids):
     """
     UTC datetimes for a list of night ids.
-
-    A night id is an MWA obsid with its last four digits dropped, and an obsid
-    is its GPS start second, so `night * 10_000` is the GPS second the night
-    starts at.
     """
     return np.array([Time(int(n) * 10_000, format='gps').utc.datetime
                      for n in night_ids])
@@ -313,14 +200,6 @@ def night_dates(night_ids):
 def _posterior_mean_beta(idata):
     """
     Posterior mean of `beta`, as an (N_nights, L) array.
-
-    Accumulated one chain at a time in float64. The chains are float32 and
-    there are ~144,000 draws of a beta_0 as large as the data itself (~780),
-    so a float32 reduction over the whole sample axis loses digits exactly
-    where this figure reads them -- the night-to-night spread is orders of
-    magnitude smaller than the coefficients themselves. Per-chain slicing also
-    keeps peak memory at one chain (~50 MB) rather than the whole array
-    widened to float64.
     """
     beta     = idata.posterior['beta']
     n_chains = beta.sizes['chain']
@@ -333,157 +212,12 @@ def _posterior_mean_beta(idata):
     return total / (n_chains * n_draws)
 
 
-def plot_corner_legendre(idata, night_ids=None, n_coeff=None, savefig=False,
-                         savepath=None, show=False):
-    """
-    Corner plot of the fitted Legendre background coefficients, night by night
-    (`__make_paper_figs/legendre_coeff_corner.py`).
-
-    Each night's `beta` posterior is collapsed to its MEAN -- one number per
-    (night, coefficient) -- and the resulting (N_nights, L) table is corner
-    plotted, so the points in every panel are NIGHTS, not posterior draws.
-    This deliberately throws the per-night posterior uncertainty away and shows
-    the opposite thing: how much the background SHAPE itself moves across the
-    season, and which coefficients move together when it does. A tight blob
-    means the season's backgrounds are all essentially the same curve; an
-    elongated one means two coefficients trade off against each other night to
-    night.
-
-    Points are coloured by the night's date, so a seasonal drift in any
-    coefficient (or a handful of outlying nights) is visible without labelling
-    40-odd points.
-
-    Parameters
-    ----------
-    idata : arviz.InferenceData
-        Fitted posterior, with a per-night `beta`.
-    night_ids : sequence of str, optional
-        The night ids behind `beta`'s night axis, in fit order (i.e.
-        `data_dict['night_ids']`). Used only for the date colour code; without
-        them the points are coloured by night index instead. Length is checked
-        against the posterior, since a mismatched list would silently mis-date
-        every point.
-    n_coeff : int, optional
-        How many of the L coefficients to plot, lowest-order first. None (the
-        default) plots all of them, which at L = 24 is a 24 x 24 wall of
-        panels -- pass 6-8 for a legible sub-figure of the modes that carry
-        most of the background's shape.
-    """
-    # The grid is n_coeff panels across, so the figure has to grow with it or
-    # the panels come out postage-stamp sized. At L = 24 this is a ~26 inch
-    # figure, which is already ~4000 px at the dpi below -- hence 150 rather
-    # than the 300 the smaller figures use.
-    PANEL_INCHES = 1.1
-    DPI          = 150
-    # Histogram bins on the diagonal. There are only ~40 nights, so corner's
-    # default (20) leaves most bins holding one night and the diagonal reads
-    # as noise.
-    N_BINS     = 12
-    POINT_SIZE = 16
-    CMAP       = 'viridis'
-
-    beta_mean = _posterior_mean_beta(idata)
-    n_nights  = beta_mean.shape[0]
-
-    x    = beta_mean[:, :n_coeff] if n_coeff else beta_mean
-    k    = x.shape[1]
-
-    if night_ids is not None and len(night_ids) != n_nights:
-        raise ValueError(
-            f"{len(night_ids)} night ids but the posterior has {n_nights} "
-            "nights -- the night list doesn't belong to this posterior."
-        )
-
-    if night_ids is None:
-        t        = np.arange(n_nights, dtype=float)
-        cb_label = f"Night index — {n_nights} nights"
-        date_cb  = False
-    else:
-        t        = mdates.date2num(night_dates(night_ids))
-        cb_label = f"Night (UTC) — {n_nights} nights"
-        date_cb  = True
-
-    # corner needs at least as many points as dimensions. A fit with fewer
-    # nights than coefficients (a half-split, say) can't be corner-plotted at
-    # all -- skip the figure rather than take the postprocessing task down
-    # with it.
-    if n_nights <= k:
-        print(f"Skipping the Legendre corner plot: {n_nights} nights is too few "
-              f"for {k} coefficients. Pass n_coeff < {n_nights} to plot a subset.")
-        return
-
-    norm = Normalize(vmin=t.min(), vmax=t.max())
-
-    size = PANEL_INCHES * k
-    fig  = plt.figure(figsize=(size, size))
-
-    # Nights are plotted as plain points: with ~40 of them in L dimensions
-    # there is nothing for corner's contours or density image to estimate, and
-    # asking for them produces either an error or a misleading smooth blob.
-    # corner draws the panel frames, limits and diagonal histograms; the
-    # off-diagonal points are scattered on below, because corner draws its
-    # points with `Axes.plot`, which takes one colour for the whole series and
-    # so can't carry the date colour code.
-    corner.corner(
-        x,
-        labels=[rf"$\beta_{{{i}}}$" for i in range(k)],
-        fig=fig,
-        bins=N_BINS,
-        plot_datapoints=False,
-        plot_density=False,
-        plot_contours=False,
-        hist_kwargs=dict(color="0.35", lw=1.0),
-        label_kwargs=dict(fontsize=11),
-        labelpad=0.08,
-    )
-
-    # corner builds the grid with plt.subplots(k, k), so its axes come back in
-    # row-major order: axes[i, j] has coefficient j on x and coefficient i on
-    # y, and only the lower triangle (j < i) is drawn.
-    axes = np.array(fig.axes).reshape((k, k))
-    for i in range(k):
-        for j in range(i):
-            axes[i, j].scatter(x[:, j], x[:, i], c=t, cmap=CMAP, norm=norm,
-                               s=POINT_SIZE, linewidths=0.3,
-                               edgecolors='white', zorder=3)
-
-    for ax in fig.axes:
-        ax.tick_params(axis="both", labelsize=8)
-
-    # Up in the empty top-right triangle, where it costs no panel space. With
-    # dates, the bar doubles as the season's calendar span.
-    cax = fig.add_axes([0.62, 0.90, 0.30, 0.012])
-    cb  = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=CMAP),
-                       cax=cax, orientation='horizontal')
-    cb.set_label(cb_label, fontsize=12)
-    if date_cb:
-        cb.ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-    cb.ax.tick_params(labelsize=10)
-
-    fig.suptitle("Per-night posterior-mean Legendre coefficients",
-                 fontsize=16, x=0.62, y=0.96, ha='center')
-
-    if savefig:
-        fig.savefig(os.path.join(savepath, "legendre_corner.png"),
-                    dpi=DPI, bbox_inches='tight')
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-
 def plot_night(idata, z, data_dict, ndx, mu_bg, pointing, sigma_clean,
                 savefig=False, savepath=None, show=False):
     """
-    Three-panel figure for one night (`__make_paper_figs/get_night_examples.py`):
-    data with the fitted background, background-subtracted residuals, and the
-    posterior soft labels, sharing a time axis in seconds.
-
-    The panels carry the posterior's own spread rather than a sample of draws:
-    the background is a `N_SIGMA_BG`-sigma band, the residuals and soft labels
-    carry `N_SIGMA_ERRORBARS`-sigma error bars. Every panel draws its base
-    series (black data, grey residuals, black soft labels) and then overlays
-    the model-only / SSINS-only / both RFI colour code on top, so a flagged
-    sample can be followed down the panels by eye.
+    Three-panel figure for one night: data with the fitted background,
+    background-subtracted residuals, and the posterior soft labels, 
+    sharing a time axis in seconds.
 
     Parameters
     ----------
@@ -523,10 +257,6 @@ def plot_night(idata, z, data_dict, ndx, mu_bg, pointing, sigma_clean,
 
     masks = rfi_masks(model_mask, ssins_mask)
 
-    # The lower two panels' base series are dense enough that a black/grey dot
-    # shows through the thin points of a red star drawn on top of it, making
-    # the star read as a dot. Drop the base marker wherever a star goes; the
-    # other two categories' markers are solid and cover their own dots.
     unstarred = ~masks['both']
 
     fig, axes = plt.subplots(
@@ -598,68 +328,11 @@ def plot_night(idata, z, data_dict, ndx, mu_bg, pointing, sigma_clean,
     else:
         plt.close(fig)
 
-def plot_chisq(chi2_median, chi2_lo, chi2_hi, savepath=None, savefig=False, show=False):
-    """
-    """
-    nights = np.arange(chi2_median.size)
-
-    fig, ax = plt.subplots(figsize=(12, 4))
-    ax.errorbar(
-        nights, chi2_median,
-        yerr=[chi2_median - chi2_lo, chi2_hi - chi2_median],
-        fmt='o', capsize=3, linewidth=1, label='median + 94% HDI'
-    )
-    ax.axhline(1.0, linestyle='--', color='red', linewidth=1, label=r'ideal (reduced $\chi^2$=1)')
-    ax.set_xlabel("Night index")
-    ax.set_ylabel(r"Reduced $\chi^2$")
-    ax.set_title(r"Reduced $\chi^2$ per night (clean samples only)")
-    ax.legend()
-    plt.tight_layout()
-    if savefig:
-        plt.savefig(os.path.join(savepath, "clean_chi2_per_night.png"), dpi=300, bbox_inches='tight')
-    if show:
-        plt.show()
-    else:
-        plt.close()
-
-
-def plot_nll(nll_median, nll_lo, nll_hi, savepath=None, savefig=False, show=False):
-    """
-    """
-    nights = np.arange(nll_median.size)
-
-    fig, ax = plt.subplots(figsize=(12, 4))
-    ax.errorbar(
-        nights, nll_median,
-        yerr=[nll_median - nll_lo, nll_hi - nll_median],
-        fmt='o', capsize=3, linewidth=1, label='median + 94% HDI'
-    )
-    ax.set_xlabel("Night index")
-    ax.set_ylabel("Mean negative log-pdf")
-    ax.set_title("SkewCauchy fit to RFI residuals per night")
-    ax.legend()
-    plt.tight_layout()
-    if savefig:
-        plt.savefig(os.path.join(savepath, "rfi_nll_per_night.png"), dpi=300, bbox_inches='tight')
-    if show:
-        plt.show()
-    else:
-        plt.close()
-
 
 def plot_clean_rfi_histograms(z, data_dict, samples, sigma_clean, savepath=None, savefig=False, show=False):
     """
     Histograms of the residuals the model called clean and RFI, each with the
     component it was assigned to drawn over it
-    (`__make_paper_figs/show_residuals.ipynb`).
-
-    Two panels side by side, both on a log density axis. The clean panel
-    carries one Normal(0, sigma_clean) curve per night -- the analytic thermal
-    noise, which is not fitted, so the agreement is a check rather than a fit.
-    The RFI panel carries the posterior of the SkewCauchy component as a
-    pointwise band: the spread of `N_SIGMA_PDF` standard deviations taken in
-    LOG density, since that is the axis the curve is read on, with the
-    geometric mean drawn through it.
 
     Parameters
     ----------
@@ -680,10 +353,7 @@ def plot_clean_rfi_histograms(z, data_dict, samples, sigma_clean, savepath=None,
     """
     A_RFI       = 0.99
     N_SIGMA_PDF = 10
-    # Draws to build the RFI band from. The band is a pointwise mean and std
-    # over draws, so a few thousand of the ~144,000 draws fix it to well
-    # inside the linewidth -- while evaluating every draw on the x grid would
-    # allocate an (S, 1000) float array of order 1 GB inside a stage-3 task.
+    # Draws to build the RFI band from.
     MAX_PDF_DRAWS = 2000
 
     # Flatten residuals and labels across nights
@@ -766,8 +436,6 @@ def plot_clean_rfi_histograms(z, data_dict, samples, sigma_clean, savepath=None,
         plt.close(fig)
 
 def compare_model_pdfs(samples, sigma_clean, savefig=False, savepath=None, show=False):
-    """
-    """
     x = np.linspace(-10, 10, 1000)
 
     plt.figure(figsize=(8,4))

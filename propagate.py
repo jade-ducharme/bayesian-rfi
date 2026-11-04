@@ -14,33 +14,16 @@ from pyuvdata import UVFlag
 
 warnings.filterwarnings("ignore")
 
-
-ABS_DIR = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"
-
-TV_BANDS = {
-    'subTV': (0,       174e6),
-    'TV6':   (174e6,   181e6),
-    'TV7':   (181e6,   188e6),
-    'TV8':   (188e6,   195e6),
-    'TV9':   (195e6,   np.inf),
-}
-
-POL_TO_IDX = {
-    'xx': 0,
-    'yy': 1,
-}
-
-TV_SUBBANDS   = ['subTV', 'TV6', 'TV7', 'TV8', 'TV9']
-POLARIZATIONS = ['xx', 'yy']
-
-UVFLAG_DIR = os.path.join(ABS_DIR, "data/uvflag/")
-H5_PATH    = os.path.join(ABS_DIR, "out/processed/", hdf5_utils.HDF5_FILENAME)
-
-# Number of contiguous chunks the UVFlag file list is split into, one per array task
-N_JOBS = 50
-
-# atol precision for numpy isclose
-TIME_DECIMALS = 7
+from config import (
+    ABS_DIR,
+    H5_PATH,
+    N_JOBS,
+    POL_TO_IDX,
+    POLARIZATIONS,
+    TV_BANDS,
+    TV_SUBBANDS,
+    UVFLAG_DIR,
+)
 
 
 def get_freq_mask(uvf, tv_subband):
@@ -52,9 +35,7 @@ def get_freq_mask(uvf, tv_subband):
 def build_label_lookup(df):
     """
     Build a fast time -> {tv_subband: {pol: (soft_label, soft_label_std)}}
-    lookup from the season-results dataframe, so per-timestep propagation
-    doesn't have to linearly scan the full (multi-million-row) dataframe for
-    every UVFlag timestep.
+    lookup from the season-results dataframe
 
     Parameters
     ----------
@@ -70,7 +51,7 @@ def build_label_lookup(df):
     """
     lookup = {}
     for row in df.itertuples(index=False):
-        key = round(row.time_jd, TIME_DECIMALS)
+        key = round(row.time_jd, 7)
         lookup.setdefault(key, {}).setdefault(row.tv_subband, {})[row.pol] = (
             row.soft_label, row.soft_label_std
         )
@@ -109,8 +90,7 @@ def propagate_flags_for_file(uvfile, lookup, rejected_lookup):
     Propagate season-results RFI classifications into one UVFlag file, in
     place, and write the result back to disk in "metric" mode.
 
-    Previously this wrote a boolean hard-label into flag_array. Instead, it
-    now writes the continuous soft label (posterior mean RFI responsibility
+    Writes the continuous soft label (posterior mean RFI responsibility
     p_rfi, in [0, 1]) into `metric_array`, and its Bayesian error bar
     (posterior std of p_rfi) into `weights_array` -- pyuvdata's UVFlag schema
     has no dedicated uncertainty field, but `weights_array` is the only other
@@ -118,33 +98,6 @@ def propagate_flags_for_file(uvfile, lookup, rejected_lookup):
     https://pyuvdata.readthedocs.io/en/latest/uvflag.html). This is a
     repurposing, not an established pyuvdata convention, so it's documented
     here and in the object's `history`.
-
-    `uvf.to_metric()` is called first, which seeds `metric_array` from the
-    object's existing boolean `flag_array` (the coarse-band/edge-time
-    pre-flags from `preprocess.py` become metric=1.0, i.e. maximally
-    "RFI-like", before classified values overwrite them below).
-
-    For every timestep, looks up the classified (soft_label, soft_label_std)
-    for each (TV sub-band, polarization) combination at that time and writes
-    it into the corresponding frequency channels (broadcast across the whole
-    sub-band, since the mixture model classifies one value per
-    frequency-averaged sub-band/timestep). The xx/yy values go onto
-    polarization axes 0/1; the two cross-polarization axes (2 = XY, 3 = YX)
-    take whichever of xx/yy is more RFI-like (max soft_label), carrying that
-    pol's error bar along -- the continuous analogue of the old OR-of-hard-labels.
-
-    If this obsid's night was rejected upstream (excessive SSINS flagging,
-    see `mixture_model.reject_nights`), there's no posterior classification
-    to look up for the rejected sub-band(s) at all -- so instead of being
-    left untouched, every timestep is set to metric=1.0 (treated as fully
-    RFI, matching the old force-flag behavior) with weights=0.0, uniformly
-    across that sub-band's frequency channels (all 4 polarization axes) for
-    the whole file. NOTE: here weights=0.0 means "no posterior data available
-    at all" (the night was excluded from the fit), NOT that the uncertainty
-    on the metric is actually zero -- don't confuse it with the weights=std
-    convention used for classified entries. Timesteps with no matching
-    season-results entry for some other reason (e.g. postprocessing hasn't
-    run yet for that combo) are left untouched and counted in `n_missing`.
 
     Parameters
     ----------
@@ -189,7 +142,7 @@ def propagate_flags_for_file(uvfile, lookup, rejected_lookup):
 
     n_missing = 0
     for tdx, t in enumerate(uvf.time_array):
-        labels_at_t = lookup.get(round(float(t), TIME_DECIMALS))
+        labels_at_t = lookup.get(round(float(t), 7))
         if labels_at_t is None:
             n_missing += 1
             continue
@@ -239,16 +192,7 @@ def propagate_flags_for_file(uvfile, lookup, rejected_lookup):
 
 def propagate_flags(job_index, n_jobs, uvflag_dir=UVFLAG_DIR, h5_path=H5_PATH):
     """
-    Propagate season-results RFI classifications into this job's slice of
-    UVFlag files.
-
-    The full list of `*_flags.h5` files is split into `n_jobs` contiguous
-    chunks (via np.array_split on the sorted file list); this call processes
-    only the `job_index`'th chunk. Each task reads/writes a disjoint set of
-    files, so this is safe to run as an uncoordinated SLURM array job (unlike
-    postprocess.py, no shared-file locking is needed). Chunking
-    (rather than one file per task) amortizes the cost of loading and
-    indexing the shared season_results.h5 file over many UVFlag files per job.
+    Propagate season-results RFI classifications into UVFlag files.
 
     Parameters
     ----------

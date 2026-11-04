@@ -34,10 +34,7 @@ def reject_nights(npz_files, tol=0.33):
     night_ids: list of str
         Night IDs of nights kept.
     reject_obsids : dict
-        Night ID -> list of full MWA obsid strings, for rejected nights only.
-        A night's npz file is keyed only by its first obsid's truncated ID,
-        so this is what lets downstream flag-propagation identify every
-        UVFlag file (one per obsid) that belongs to a rejected night.
+        Night ID -> list of full MWA obsid strings for rejected nights only
     """
     reject = []
     reject_obsids = {}
@@ -102,12 +99,7 @@ def random_split_nights(npz_files, night_ids, half, random_seed):
     half : int
         0 or 1. Selects which half of the shuffled nights to keep.
     random_seed : int
-        Seed for the shuffle, so the split is reproducible *within this
-        process*. Note this is not a substitute for saving the resulting
-        night_ids out (see `fit.py`) -- shuffles aren't
-        guaranteed reproducible across numpy versions/platforms, so
-        postprocessing must replay the exact saved list (`select_nights_by_id`)
-        rather than re-deriving the split from this function.
+        Seed for the shuffle, so the split is reproducible
 
     Returns
     -------
@@ -134,17 +126,6 @@ def select_nights_by_id(npz_files, night_ids, keep_night_ids):
     Restrict npz_files/night_ids to an explicit, previously-chosen list of
     night IDs, in that exact order.
 
-    This is how postprocessing replays the *exact* nights (and their exact
-    order) a model was fit on, regardless of how they were originally
-    selected (full season, chronological split, random split, ...) --
-    rather than re-deriving a split, which is fragile (a random shuffle
-    isn't guaranteed reproducible across numpy versions/platforms, and even
-    a deterministic split can silently diverge if the underlying candidate
-    nights change between fit time and postprocess time, e.g. new raw data
-    arriving or a different rejection tolerance). See
-    `fit.py`, which saves the final night_ids list next to
-    each chains file, in fit order.
-
     Parameters
     ----------
     npz_files : list of str
@@ -153,13 +134,6 @@ def select_nights_by_id(npz_files, night_ids, keep_night_ids):
         Night IDs aligned with npz_files.
     keep_night_ids : sequence of str
         Night IDs to keep, IN THE EXACT ORDER they were used at fit time
-        (i.e. as read line-by-line from the `..._nights.txt` sidecar). Order
-        matters and is preserved in the output: `beta`'s per-night posterior
-        index is tied to whatever order the model was fit with, so if a
-        night's data ends up at a different position than it was fit at
-        (e.g. re-sorted chronologically after a random split), the
-        reconstructed background/residuals get silently computed against
-        the wrong night's posterior.
 
     Returns
     -------
@@ -171,12 +145,7 @@ def select_nights_by_id(npz_files, night_ids, keep_night_ids):
     Raises
     ------
     ValueError
-        If any of keep_night_ids isn't found among npz_files/night_ids --
-        the saved list can no longer be exactly reconstructed (e.g. the
-        night was rejected under a different tolerance, or its data is
-        missing), so silently proceeding with a partial/mismatched set
-        would risk quietly corrupting the reconstructed data instead of
-        failing loudly.
+        If any of keep_night_ids isn't found among npz_files/night_ids
     """
     lookup = dict(zip(night_ids, npz_files))
     keep_night_ids = list(keep_night_ids)

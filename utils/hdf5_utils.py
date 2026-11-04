@@ -1,17 +1,21 @@
 import contextlib
 import fcntl
 import os
+import sys
 import time
 
 import h5py
 import numpy as np
 import pandas as pd
 
-HDF5_FILENAME = "season_results.h5"
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import (
+    POINTINGS,
+    POLARIZATIONS,
+    SOFT_LABEL_SAMPLES_SUBDIR,
+    TV_SUBBANDS,
+)
 
-TV_SUBBANDS   = ['subTV', 'TV6', 'TV7', 'TV8', 'TV9']
-POINTINGS     = [0, 1, 2, 3, 4]
-POLARIZATIONS = ['xx', 'yy']
 
 @contextlib.contextmanager
 def locked_hdf5(path, mode='a', retries=20, wait=3.0):
@@ -79,24 +83,6 @@ def write_results(h5_path, pointing, tv_subband, polarization,
                     time_stamps       (N_nights, T_max)
                     night_ids         (N_nights,)
                     lengths           (N_nights,)
-
-    Parameters
-    ----------
-    residuals : tuple of (residual_median, residual_std)
-        Posterior median and std of the background-subtracted residual at
-        every (night, timestep), collapsed over posterior draws -- i.e. the
-        reconstructed data itself, not just labels/metrics derived from it.
-        Each array has shape (N_nights, T_max). See
-        `postprocessing_utils.get_residual_summary`.
-    rejected_obsids : dict
-        Night ID -> list of full MWA obsid strings, for nights excluded from
-        this (pointing, tv_subband) combo for excessive SSINS flagging (see
-        `mixture_model.reject_nights`). Rejection doesn't depend on
-        polarization, so this is written once per (pointing, tv_subband),
-        shared by both the xx and yy jobs, rather than duplicated under each
-        polarization's group. Consumed by `propagate.py` via
-        `read_rejected_obsids`, since rejected nights have no posterior
-        classification to look up and should instead be flagged outright.
     """
     chi2_median, chi2_lo, chi2_hi = chi2
     nll_median,  nll_lo,  nll_hi  = nll
@@ -177,26 +163,15 @@ def write_results(h5_path, pointing, tv_subband, polarization,
     print(f"  Written to HDF5: {root}")
 
 
-SOFT_LABEL_SAMPLES_SUBDIR = "soft_label_samples"
-
-
 def soft_label_samples_path(run_dir, output_timestring):
     """
     Path of the per-run HDF5 file holding the full (chain, draw, night, time)
     soft-label array for one postprocessing run.
 
-    Kept out of the shared `season_results.h5` (which only stores the posterior
-    mean/std collapsed over draws) because the full array is O(10 GB) per
-    (pointing, tv_subband, polarization) combo and would blow up a file that
-    every downstream stage opens.
-
     Parameters
     ----------
     run_dir           : str  Run directory tree (same one stage 3 writes into).
     output_timestring : str  Chains-file stem, e.g. 'TV7_p0_polxx_20260525_114956'
-                        (already encodes tv_subband, pointing, polarization,
-                        optional half tag, and fit timestamp), so the filename
-                        is unique per run.
     """
     return os.path.join(run_dir, "processed", SOFT_LABEL_SAMPLES_SUBDIR,
                         f"soft_label_samples_{output_timestring}.h5")
@@ -204,17 +179,10 @@ def soft_label_samples_path(run_dir, output_timestring):
 
 def write_soft_label_samples(h5_path, soft_labels, n_chains, n_draws,
                              pointing, tv_subband, polarization, data_dict,
-                             thin=1, source_file=None, compression='gzip'):
+                             source_file=None, compression='gzip'):
     """
     Write the complete per-draw soft labels (RFI responsibilities) to their own
     HDF5 file, unstacked back into (chain, draw, night, time).
-
-    Unlike the shared season-results store, this file is written by exactly one
-    SLURM task and read by nobody concurrently, so it is opened with plain
-    `h5py.File` rather than `locked_hdf5`.
-
-    The array is written one chain at a time so the full (S, N, T) block is
-    never copied off-device in one piece.
 
     HDF5 structure:
         /soft_labels  (n_chains, n_draws_kept, N_nights, T_max)  float32
@@ -223,25 +191,7 @@ def write_soft_label_samples(h5_path, soft_labels, n_chains, n_draws,
         /lengths      (N_nights,)
         /mask         (N_nights, T_max)        bool, valid (unpadded) samples
         attrs: pointing, tv_subband, polarization, n_chains, n_draws,
-               n_draws_kept, thin, source_file
-
-    Parameters
-    ----------
-    h5_path      : str    Destination file (see `soft_label_samples_path`).
-    soft_labels  : array-like, shape (S, N, T) where S = n_chains * n_draws.
-                   The `p_rfi` returned by `postprocessing_utils.classify`,
-                   whose sample axis came from stacking ('chain', 'draw') in
-                   that order -- so it reshapes to (n_chains, n_draws, N, T).
-    n_chains     : int    Chains remaining after stuck-chain removal.
-    n_draws      : int    Draws per chain.
-    pointing     : int
-    tv_subband   : str
-    polarization : str
-    data_dict    : dict   Padded per-night data; supplies night_ids, times,
-                   lengths and mask so the file is self-describing.
-    thin         : int    Keep every `thin`-th draw within each chain (1 = all).
-    source_file  : str, optional  Chains file the labels were derived from.
-    compression  : str or None    h5py compression filter for the big array.
+               n_draws_kept, source_file
     """
     S = soft_labels.shape[0]
     if n_chains * n_draws != S:
@@ -251,7 +201,7 @@ def write_soft_label_samples(h5_path, soft_labels, n_chains, n_draws,
             "unstack exactly into (chain, draw)."
         )
 
-    draw_idx     = np.arange(0, n_draws, thin)
+    draw_idx     = np.arange(0, n_draws)
     n_kept       = len(draw_idx)
     _, N, T      = soft_labels.shape
     nbytes       = n_chains * n_kept * N * T * 4
@@ -287,7 +237,6 @@ def write_soft_label_samples(h5_path, soft_labels, n_chains, n_draws,
         f.attrs['n_chains']     = n_chains
         f.attrs['n_draws']      = n_draws
         f.attrs['n_draws_kept'] = n_kept
-        f.attrs['thin']         = thin
         f.attrs['source_file']  = source_file or ''
 
     print(f"  Written soft-label samples ({os.path.getsize(h5_path) / 1e9:.1f} GB on disk)")
@@ -313,27 +262,8 @@ GLOBAL_PARAM_STATS = ['median', 'hdi_94_lo', 'hdi_94_hi', 'hdi_50_lo', 'hdi_50_h
 
 def read_season_results(h5_path):
     """
-    Read the shared season_results.h5 file into one flat, tidy dataframe,
+    Read the shared season_results.h5 file into one dataframe,
     with one row per (pol, tv_subband, pointing, night, timestep).
-
-    Per-timestep columns include the classification labels (hard_label,
-    soft_label, soft_label_std -- the posterior mean/std of the RFI
-    responsibility p_rfi, i.e. the soft label's Bayesian error bar) as well
-    as the reconstructed data itself -- the posterior median and std of the
-    background-subtracted residual (residual_median, residual_std) -- so
-    downstream analysis doesn't need to re-run MCMC +
-    `postprocessing_utils.get_bg_residuals` just to see what the model saw.
-    residual_median/residual_std/soft_label_std are NaN for files written
-    before those fields existed.
-
-    Per-night quantities (chisq_*, nll_*) and per-combo quantities
-    (w_clean_*, loc_rfi_*, scale_rfi_*, tv_order) are broadcast across every
-    timestep row they apply to, so the whole season can be filtered/grouped
-    from this single object without any further merging. To recover
-    night- or combo-level aggregates, `.drop_duplicates()` on the
-    corresponding key columns (e.g. ['pol', 'tv_subband', 'pointing', 'night']),
-    or use `.groupby(...)` for derived stats like empirical RFI fraction
-    (`df.groupby([...])['hard_label'].mean()`).
     """
     records = []
 
@@ -377,17 +307,10 @@ def read_season_results(h5_path):
 
                     # Files written before residuals/soft_labels_std were
                     # persisted won't have these datasets -- fall back to NaN.
-                    if 'residuals_median' in lg:
-                        residual_median = np.asarray(lg['residuals_median'])
-                        residual_std    = np.asarray(lg['residuals_std'])
-                    else:
-                        residual_median = np.full(hard_labels.shape, np.nan)
-                        residual_std    = np.full(hard_labels.shape, np.nan)
+                    residual_median = np.asarray(lg['residuals_median'])
+                    residual_std    = np.asarray(lg['residuals_std'])
 
-                    if 'soft_labels_std' in lg:
-                        soft_labels_std = np.asarray(lg['soft_labels_std'])
-                    else:
-                        soft_labels_std = np.full(hard_labels.shape, np.nan)
+                    soft_labels_std = np.asarray(lg['soft_labels_std'])
 
                     for night_idx, (night, length) in enumerate(zip(night_ids, lengths)):
                         chi2_med, chi2_lo, chi2_hi = chi2_by_night.get(
@@ -438,16 +361,12 @@ def read_rejected_obsids(h5_path):
 
     These are nights excluded from the mixture-model fit (via
     `mixture_model.reject_nights`) for exceeding the SSINS flagged-fraction
-    tolerance, and therefore never appear in the per-timestep records from
-    `read_season_results` -- there's no posterior classification to look up
-    for them. Downstream flag-propagation should flag them outright instead
-    (see `propagate.py`).
+    tolerance
 
     Returns
     -------
     rejected : dict
-        Maps (pointing, tv_subband) -> list of obsid strings. Combos with no
-        rejected nights, or not yet written to `h5_path`, are omitted.
+        Maps (pointing, tv_subband) -> list of obsid strings
     """
     rejected = {}
 

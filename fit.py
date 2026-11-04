@@ -22,22 +22,13 @@ numpyro.set_host_device_count(48)  # assumes 48-core device
 
 from jax import random as jrandom
 
-ABS_DIR       = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"
-TV_SUBBANDS   = ['subTV', 'TV6', 'TV7', 'TV8', 'TV9']
-POINTINGS     = [0, 1, 2, 3, 4]
-POLARIZATIONS = ['xx', 'yy']
-L             = 24
-RANDOM_SEED   = 42
+from config import (
+    ABS_DIR,
+    JOB_MAP,
+    RANDOM_SEED,
+    L,
+)
 
-JOB_MAP = {
-    idx: (L, tv, p, pol)
-    for idx, (tv, p, pol) in enumerate(
-        (tv, p, pol)
-        for tv   in TV_SUBBANDS
-        for p    in POINTINGS
-        for pol  in POLARIZATIONS
-    )
-}
 
 def run_mixture_model(pointing, L, pol, tv_subband, random_seed, run_dir,
                     split_method=None, half=None):
@@ -202,7 +193,7 @@ if __name__ == "__main__":
     args = cli.parse_args(parser)
 
     # A half-split is only defined by both halves of the description, so
-    # accept either both flags or neither rather than silently ignoring one.
+    # accept either both flags or neither
     if (args.split_method is None) != (args.half is None):
         parser.error("--split-method and --half must be given together "
                      "(omit both for a full-season fit)")

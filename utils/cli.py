@@ -1,38 +1,15 @@
 """
 Shared command-line interface for the top-level pipeline scripts.
-
-Every stage of the pipeline runs as a SLURM array job, so every top-level
-script takes exactly the same first argument -- `job_index`, the index of this
-task inside that stage's job grid (i.e. `$SLURM_ARRAY_TASK_ID`) -- followed by
-optional, stage-specific flags. Nothing else is positional, so the stages stay
-interchangeable from a caller's point of view and the `.sh` wrappers stay thin
-pass-throughs.
-
-The grid itself is always defined in Python (a module-level `JOB_MAP` or
-`N_JOBS`). `--n-jobs` prints its size, which is the
-one number the `#SBATCH --array=` bound has to agree with:
-
-    python fit.py --n-jobs        # -> 50, i.e. #SBATCH --array=0-49
-
-Stages that aren't parallel over anything (`summarize_season.py`) still take a
-`job_index`, which must then be 0.
 """
 
 import argparse
 import os
 
-# Set by build_parser() on the parser itself, so parse_args() can recover the
-# grid size without every caller having to pass it twice.
 _N_JOBS_DEST = "_n_jobs"
-
 
 def build_parser(description, n_jobs, epilog=None):
     """
     Build an ArgumentParser carrying the CLI contract shared by every stage.
-
-    Adds the `job_index` positional (validated against `n_jobs` in
-    `parse_args`) and the `--n-jobs` introspection flag. Callers add their own
-    stage-specific options to the returned parser, then call `parse_args`.
 
     Parameters
     ----------
@@ -54,8 +31,7 @@ def build_parser(description, n_jobs, epilog=None):
     )
     parser.set_defaults(**{_N_JOBS_DEST: n_jobs})
 
-    # nargs="?" so `--n-jobs` can be used on its own; parse_args() enforces
-    # that job_index is present otherwise.
+    # nargs="?" so `--n-jobs` can be used on its own
     parser.add_argument(
         "job_index",
         nargs="?",
@@ -75,11 +51,6 @@ def build_parser(description, n_jobs, epilog=None):
 def parse_args(parser, argv=None):
     """
     Parse and validate arguments from a parser built by `build_parser`.
-
-    Handles `--n-jobs` (prints the grid size and exits 0) and range-checks
-    `job_index`, exiting 2 with a usage message if it's missing or out of
-    range -- checked here rather than in each stage so the failure mode is
-    identical everywhere.
 
     Returns
     -------
@@ -138,8 +109,7 @@ def resolve_run_dir(run_dir, abs_dir):
     Resolve a `--run-dir` value to an absolute path.
 
     Absolute paths are used as given; anything else is interpreted relative to
-    the project root, so `--run-dir out_chrono_split` and
-    `--run-dir /oscar/.../BayesRFI/out_chrono_split/` mean the same thing.
+    the project root
     """
     if os.path.isabs(run_dir):
         return run_dir

@@ -16,16 +16,14 @@ from SSINS import INS, MF, SS
 
 warnings.filterwarnings("ignore")
 
+from config import (
+    CB_PATH,
+    DATA_IN_DIR,
+    DATA_OUT_DIR,
+    TV_SUBBANDS,
+)
 
-ABS_DIR     = "/oscar/data/jpober/jmduchar/Research/BayesRFI/"
-CB_PATH     = os.path.join(os.path.dirname(__file__), "coarse_bands_1D.npy")
-CB          = np.load(CB_PATH)
-TV_SUBBANDS = ('subTV', 'TV6', 'TV7', 'TV8', 'TV9')
-
-# Raw visibilities in, reduced per-sub-band time series out.
-DATA_DIR = "/users/jmduchar/data/shared/big_dataset/"
-OUT_DIR  = os.path.join(ABS_DIR, "data/")
-
+CB = np.load(CB_PATH)
 
 def build_initial_uvflag(ins, obs, uvf_save_dir, drop_first_last):
     """
@@ -73,12 +71,6 @@ def build_ins(obsid, data_dir, uvf_save_dir, drop_first_last=True, verbose=False
     """
     Load a visibility file, apply initial flags, run the default SSINS match filter,
     and return the flagged INS object.
-
-    Applies coarse-band and (optionally) edge-time flags before computing the
-    incoherent noise spectrum. Runs a match filter tuned to DTV shapes and
-    narrowband/streak RFI. Saves a UVFlag file seeded with the initial flags
-    for downstream propagation, then trims edge integrations from the returned
-    INS if drop_first_last is True.
 
     Parameters
     ----------
@@ -215,11 +207,6 @@ def process_night_pointing(
     Process all observations for a single night/pointing and save per-subband
     metrics and flags for every TV sub-band.
 
-    Builds and concatenates INS objects for each obsid in the pointing (once,
-    shared across all sub-bands), then for each sub-band in TV_SUBBANDS
-    computes frequency-averaged XX/YY metrics and a 1D flag timeseries, pads
-    them onto a uniform time grid, and saves to a .npz file.
-
     Output files are written to:
         {out_dir}/tv_split/{tv_subband}/processed_{obsn}_p{pointing}.npz
         {out_dir}/uvflag/{obsid}_flags.h5   (one per obsid)
@@ -315,27 +302,22 @@ def process_night_pointing(
 
 
 @functools.cache
-def get_season(datapath=DATA_DIR):
+def get_season(datapath=DATA_IN_DIR):
     """
     The season's (date, pointing) -> [obsid, ...] grouping, cached.
-
-    This is the job grid for this stage: one task per (night, pointing) key,
-    in dict insertion order. Cached because building it opens every metafits
-    header in `datapath`, and both the job-grid size and the night lookup
-    itself need it within a single run.
     """
     return mm_utils.sort_season(datapath)
 
 
-def get_n_jobs(datapath=DATA_DIR):
+def get_n_jobs(datapath=DATA_IN_DIR):
     """Number of tasks in this stage's job grid (one per night/pointing)."""
     return len(get_season(datapath))
 
 
 def preprocess_single_night(
     night_idx,
-    datapath=DATA_DIR,
-    out_dir=OUT_DIR,
+    datapath=DATA_IN_DIR,
+    out_dir=DATA_OUT_DIR,
     ):
     """
     Look up the night_idx'th (date, pointing) in the season and process it.
@@ -385,8 +367,8 @@ if __name__ == "__main__":
         job_index = args.job_index,
         night     = date,
         pointing  = pointing,
-        data_dir  = DATA_DIR,
-        out_dir   = OUT_DIR,
+        data_dir  = DATA_IN_DIR,
+        out_dir   = DATA_OUT_DIR,
     )
 
     preprocess_single_night(args.job_index)

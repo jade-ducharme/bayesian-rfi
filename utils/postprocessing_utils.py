@@ -9,14 +9,7 @@ import mixture_model
 
 def load_input_data(L, abs_dir, tv_subband, pointing, polarization, keep_night_ids=None):
     """
-    Load and package one (tv_subband, pointing, polarization) combination's
-    nightly data for postprocessing, mirroring the inputs the model was fit on.
-
-    Rebuilds the candidate night list `fit.py` used (via
-    `mixture_model.build_dataset`, which applies the same flagged-fraction
-    rejection), loads the raw per-night .npz files, computes the analytic
-    thermal noise `sigma_clean`, and pads everything into the model's
-    `(N_nights, T_max)` pytree via `mixture_model.prepare_multiple_nights`.
+    Load and package one (tv_subband, pointing, polarization) combination
 
     Parameters
     ----------
@@ -24,8 +17,7 @@ def load_input_data(L, abs_dir, tv_subband, pointing, polarization, keep_night_i
         Number of Legendre coefficients (must match the value used to fit
         the model).
     abs_dir : str
-        Absolute path to the project root, with a trailing slash (used for
-        direct string concatenation, not `os.path.join`).
+        Absolute path to the project root
     tv_subband : str
         TV sub-band identifier (e.g. 'TV7').
     pointing : int
@@ -35,14 +27,7 @@ def load_input_data(L, abs_dir, tv_subband, pointing, polarization, keep_night_i
     keep_night_ids : list of str, optional
         The exact night_ids the model was fit on, IN FIT ORDER (i.e. read
         line-by-line from the `..._nights.txt` sidecar file
-        `fit.py` saves next to each chains file -- don't
-        re-sort it). If given, restricts to exactly these nights, in this
-        exact order, via `mixture_model.select_nights_by_id` (order matters:
-        it's what lines up each night with its `beta` in the posterior),
-        raising if any can't be found among this combo's current candidate
-        nights. If None, uses the full (rejection-filtered) season -- only
-        correct for a run that wasn't
-        split (`split_method=None` at fit time).
+        `fit.py` saves next to each chains file). If None, uses the full season
 
     Returns
     -------
@@ -174,17 +159,14 @@ def classify(z, samples, sigma_clean):
 def get_bg_residuals(data_dict, samples_dict):
     """
     Recompute the per-draw Legendre background and residuals from posterior
-    beta samples. Padded (invalid) entries are set to NaN rather than 0 so
-    they can't silently bias downstream aggregates.
+    beta samples.
 
     Parameters
     ----------
     data_dict : dict
-        Padded per-night data, as returned by `mixture_model.prepare_multiple_nights`
-        (needs A_pad, shape (N, T, L); y_pad, shape (N, T); mask, shape (N, T)).
+        Padded per-night data
     samples_dict : dict
-        Posterior samples, as returned by `extract_samples` (needs beta,
-        shape (S, N, L)).
+        Posterior samples, as returned by `extract_samples`
 
     Returns
     -------
@@ -210,8 +192,7 @@ def get_bg_residuals(data_dict, samples_dict):
 def get_residual_summary(z):
     """
     Collapse per-draw residuals to a posterior median and std at every
-    (night, timestep) -- the reconstructed data itself, as opposed to labels
-    or metrics derived from it, for persisting to the season-results HDF5.
+    (night, timestep) for persisting to the season-results HDF5.
 
     Parameters
     ----------
@@ -230,89 +211,6 @@ def get_residual_summary(z):
     residual_median = np.nanmedian(z, axis=0)
     residual_std    = np.nanstd(z, axis=0)
     return residual_median, residual_std
-
-
-def get_chi2(z, sigma_clean, clean_mask):
-    """
-    Compute the posterior median and 94% HDI of reduced chi-squared per
-    night, over residuals classified as "clean" — a goodness-of-fit check
-    for the clean (Normal) mixture component.
-
-    Parameters
-    ----------
-    z : array-like, shape (S, N, T)
-        Per-draw residuals after background subtraction (from `get_bg_residuals`).
-    sigma_clean : array-like, shape (N,)
-        Per-night analytic thermal noise standard deviation.
-    clean_mask : array-like, broadcastable to (S, N, T), dtype bool
-        True where a residual is labeled clean (p_rfi <= 0.5).
-
-    Returns
-    -------
-    chi2_median : np.ndarray, shape (N,)
-        Posterior median reduced chi-squared per night.
-    chi2_lo, chi2_hi : np.ndarray, shape (N,)
-        Lower/upper bounds of the 94% HDI per night.
-    """
-    sigma_c = sigma_clean[None, :, None]
-
-    # Chi-squared contribution per sample
-    chi2_terms = jnp.where(clean_mask, (z / sigma_c)**2, np.nan)   # (S, N, T)
-
-    n_clean    = clean_mask.sum(axis=-1)                         # (S, N)
-    chi2_reduced = jnp.nansum(chi2_terms, axis=-1) / n_clean     # (S, N)
-
-    chi2_median = np.array(np.median(chi2_reduced, axis=0))  # (N,)
-    hdi = np.array([az.hdi(np.array(chi2_reduced[:, n]), prob=0.94) for n in range(chi2_reduced.shape[1])])  # (N, 2)
-    chi2_lo = hdi[:, 0]
-    chi2_hi = hdi[:, 1]
-
-    return chi2_median, chi2_lo, chi2_hi
-
-
-def get_neg_logpdf_rfi(z, samples_dict, rfi_mask):
-    """
-    Compute the posterior median and 94% HDI of the per-night mean negative
-    log-pdf of the RFI (SkewCauchy) component, over residuals classified as
-    "RFI" — a goodness-of-fit check for the RFI mixture component.
-
-    Parameters
-    ----------
-    z : array-like, shape (S, N, T)
-        Per-draw residuals after background subtraction (from `get_bg_residuals`).
-    samples_dict : dict
-        Posterior samples, as returned by `extract_samples` (needs loc_rfi,
-        scale_rfi, each shape (S,)).
-    rfi_mask : array-like, broadcastable to (S, N, T), dtype bool
-        True where a residual is labeled RFI (p_rfi > 0.5).
-
-    Returns
-    -------
-    nll_median : np.ndarray, shape (N,)
-        Posterior median mean negative log-pdf per night.
-    nll_lo, nll_hi : np.ndarray, shape (N,)
-        Lower/upper bounds of the 94% HDI per night.
-    """
-
-    # Posterior parameters expanded for broadcasting
-    loc_rfi_s   = jnp.asarray(samples_dict['loc_rfi'])[:, None, None]    # (S, 1, 1)
-    scale_rfi_s = jnp.asarray(samples_dict['scale_rfi'])[:, None, None]  # (S, 1, 1)
-
-    # Negative log-pdf of SkewCauchy at each RFI residual
-    nll_terms = -mixture_model.SkewCauchy(loc_rfi_s, scale_rfi_s, 0.99).log_prob(z)  # (S, N, T)
-
-    # Sum over RFI samples per draw per night, normalise by count
-    n_rfi        = rfi_mask.sum(axis=-1)                             # (S, N)
-    nll_per_draw = jnp.where(rfi_mask, nll_terms, 0.0).sum(axis=-1) / n_rfi  # (S, N)
-
-    # Posterior median + HDI per night
-    nll_median = np.median(np.array(nll_per_draw), axis=0)           # (N,)
-    hdi_nll    = np.array([az.hdi(np.array(nll_per_draw[:, n]), prob=0.94)
-                        for n in range(nll_per_draw.shape[1])])   # (N, 2)
-    nll_lo = hdi_nll[:, 0]
-    nll_hi = hdi_nll[:, 1]
-
-    return nll_median, nll_lo, nll_hi
 
 
 def posterior_summary(samples, key, hdi_prob_outer=0.94, hdi_prob_inner=0.50):
