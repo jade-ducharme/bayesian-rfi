@@ -96,3 +96,8 @@ Use `--split-method random --seed 17` instead for a reproducible random split. F
 ## Contact
 
 Questions: jade_ducharme@brown.edu
+
+## License
+
+This project is licensed under the MIT License.
+See [LICENSE](LICENSE) for details.
